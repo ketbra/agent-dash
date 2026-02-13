@@ -323,6 +323,7 @@ impl SessionMonitor {
                     last_status_change,
                     last_seen: Instant::now(),
                     ended_at: None,
+                    active_tool: None,
                 },
             );
         }

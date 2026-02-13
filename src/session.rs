@@ -62,6 +62,8 @@ pub struct Session {
     pub last_seen: Instant,
     /// When the process was first detected as ended (for fade-out delay).
     pub ended_at: Option<Instant>,
+    /// Active tool info from hook events (if any).
+    pub active_tool: Option<(String, String)>, // (tool_name, detail)
 }
 
 // ---------------------------------------------------------------------------
@@ -84,6 +86,8 @@ pub struct DashSession {
     pub last_status_change: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_reason: Option<DashInputReason>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_tool: Option<DashActiveTool>,
 }
 
 /// Why a session needs input (permission prompt or question).
@@ -99,6 +103,30 @@ pub struct DashInputReason {
     pub detail: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+}
+
+/// Info about the currently active tool (for the extension to render icons).
+#[derive(Debug, Clone, Serialize)]
+pub struct DashActiveTool {
+    pub name: String,
+    pub detail: String,
+    pub icon: String,
+}
+
+/// Map a Claude tool name to a GNOME symbolic icon name.
+pub fn tool_icon(tool_name: &str) -> &'static str {
+    match tool_name {
+        "Bash" => "utilities-terminal-symbolic",
+        "Read" => "document-open-symbolic",
+        "Edit" => "document-edit-symbolic",
+        "Write" => "document-new-symbolic",
+        "Grep" => "edit-find-symbolic",
+        "Glob" => "folder-saved-search-symbolic",
+        "WebFetch" => "web-browser-symbolic",
+        "WebSearch" => "system-search-symbolic",
+        "Task" => "system-run-symbolic",
+        _ => "applications-system-symbolic",
+    }
 }
 
 impl Session {
@@ -136,6 +164,11 @@ impl Session {
             status,
             last_status_change: self.last_status_change,
             input_reason,
+            active_tool: self.active_tool.as_ref().map(|(name, detail)| DashActiveTool {
+                icon: tool_icon(name).to_string(),
+                name: name.clone(),
+                detail: detail.clone(),
+            }),
         }
     }
 }
@@ -175,11 +208,68 @@ mod tests {
             last_status_change: 1000,
             last_seen: Instant::now(),
             ended_at: None,
+            active_tool: None,
         };
         let ds = s.to_dash_session();
         let json = serde_json::to_string(&ds).unwrap();
         assert!(json.contains("\"status\":\"working\""));
         assert!(json.contains("\"project_name\":\"project\""));
         assert!(!json.contains("input_reason"));
+    }
+
+    #[test]
+    fn test_tool_icon_mapping() {
+        assert_eq!(tool_icon("Bash"), "utilities-terminal-symbolic");
+        assert_eq!(tool_icon("Read"), "document-open-symbolic");
+        assert_eq!(tool_icon("Edit"), "document-edit-symbolic");
+        assert_eq!(tool_icon("UnknownTool"), "applications-system-symbolic");
+    }
+
+    #[test]
+    fn test_dash_session_with_active_tool() {
+        let s = Session {
+            session_id: "abc".into(),
+            pid: 1,
+            pty: PathBuf::from("/dev/pts/0"),
+            cwd: PathBuf::from("/home/user/project"),
+            project_name: "project".into(),
+            branch: "main".into(),
+            status: SessionStatus::Working,
+            input_reason: None,
+            jsonl_path: PathBuf::new(),
+            last_jsonl_modified: None,
+            last_status_change: 1000,
+            last_seen: Instant::now(),
+            ended_at: None,
+            active_tool: Some(("Bash".into(), "cargo test".into())),
+        };
+        let ds = s.to_dash_session();
+        let json = serde_json::to_string(&ds).unwrap();
+        assert!(json.contains("\"icon\":\"utilities-terminal-symbolic\""));
+        assert!(json.contains("\"name\":\"Bash\""));
+        assert!(json.contains("\"detail\":\"cargo test\""));
+    }
+
+    #[test]
+    fn test_dash_session_without_active_tool() {
+        let s = Session {
+            session_id: "abc".into(),
+            pid: 1,
+            pty: PathBuf::from("/dev/pts/0"),
+            cwd: PathBuf::from("/home/user/project"),
+            project_name: "project".into(),
+            branch: "main".into(),
+            status: SessionStatus::Idle,
+            input_reason: None,
+            jsonl_path: PathBuf::new(),
+            last_jsonl_modified: None,
+            last_status_change: 1000,
+            last_seen: Instant::now(),
+            ended_at: None,
+            active_tool: None,
+        };
+        let ds = s.to_dash_session();
+        let json = serde_json::to_string(&ds).unwrap();
+        assert!(!json.contains("active_tool"));
     }
 }
