@@ -58,7 +58,7 @@ build_message() {
                 --arg tool "$TOOL_NAME" \
                 --arg tuid "$TOOL_USE_ID" \
                 --arg detail "$DETAIL" \
-                '{event: $event, session_id: $sid, tool_name: $tool, tool_use_id: $tuid, detail: $detail}'
+                '{event: $event, session_id: $sid, tool: $tool, tool_use_id: $tuid, detail: $detail}'
             ;;
         tool_end)
             TOOL_USE_ID=$(echo "$INPUT" | jq -r '.tool_use_id // empty')
@@ -80,6 +80,6 @@ build_message() {
 
 # Fire-and-forget: send to daemon socket, silently ignore errors
 MSG=$(build_message)
-echo "$MSG" | socat -t0 - UNIX-CONNECT:"$SOCKET" || true
+echo "$MSG" | ncat -U --send-only "$SOCKET" 2>/dev/null || true
 
 exit 0
