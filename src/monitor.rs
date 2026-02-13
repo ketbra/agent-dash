@@ -124,16 +124,26 @@ pub struct JsonlStatus {
     pub question_text: Option<String>,
 }
 
-/// Read the last N lines of a file (avoids reading the entire file).
+/// Read the last N lines of a file by seeking from the end.
 fn read_tail_lines(path: &std::path::Path, max_lines: usize) -> Vec<String> {
-    use std::io::{BufRead, BufReader};
-    let Ok(file) = std::fs::File::open(path) else {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = std::fs::File::open(path) else {
         return vec![];
     };
-    let reader = BufReader::new(file);
-    let all_lines: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
-    let start = all_lines.len().saturating_sub(max_lines);
-    all_lines[start..].to_vec()
+    let Ok(file_len) = file.seek(SeekFrom::End(0)) else {
+        return vec![];
+    };
+    if file_len == 0 {
+        return vec![];
+    }
+    // Read up to 64KB from the end — more than enough for 20 JSONL lines
+    let read_size = file_len.min(64 * 1024);
+    let _ = file.seek(SeekFrom::End(-(read_size as i64)));
+    let mut buf = String::new();
+    let _ = file.read_to_string(&mut buf);
+    let lines: Vec<String> = buf.lines().map(|l| l.to_string()).collect();
+    let start = lines.len().saturating_sub(max_lines);
+    lines[start..].to_vec()
 }
 
 /// Parse the tail of a JSONL file to extract session status.

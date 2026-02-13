@@ -9,7 +9,7 @@ INPUT=$(cat)
 
 # Extract fields from the hook's JSON input
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
-TOOL=$(echo "$INPUT" | jq -r '.tool // empty')
+TOOL=$(echo "$INPUT" | jq -r '.tool_name // empty')
 TOOL_INPUT=$(echo "$INPUT" | jq -c '.tool_input // {}')
 
 if [ -z "$SESSION_ID" ]; then

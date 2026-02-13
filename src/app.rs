@@ -9,7 +9,6 @@ pub struct AgentDashApp {
     last_refresh: Instant,
     expanded_session: Option<String>,
     dragging: bool,
-    drag_offset: egui::Pos2,
 }
 
 impl AgentDashApp {
@@ -19,7 +18,6 @@ impl AgentDashApp {
             last_refresh: Instant::now() - Duration::from_secs(10), // force immediate refresh
             expanded_session: None,
             dragging: false,
-            drag_offset: egui::Pos2::ZERO,
         }
     }
 }
