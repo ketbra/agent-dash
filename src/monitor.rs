@@ -1,5 +1,6 @@
 use crate::ipc;
 use crate::session::{InputReason, Session, SessionStatus};
+use crate::socket::HookState;
 use procfs::process::FDTarget;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -227,15 +228,17 @@ pub fn parse_jsonl_status(path: &std::path::Path) -> Option<JsonlStatus> {
 pub struct SessionMonitor {
     pub sessions: HashMap<String, Session>,
     claude_projects_dir: PathBuf,
+    hook_state: HookState,
 }
 
 impl SessionMonitor {
-    pub fn new() -> Self {
+    pub fn new(hook_state: HookState) -> Self {
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
         let claude_projects_dir = home.join(".claude").join("projects");
         Self {
             sessions: HashMap::new(),
             claude_projects_dir,
+            hook_state,
         }
     }
 
@@ -267,19 +270,15 @@ impl SessionMonitor {
                 continue;
             }
 
-            let last_modified = std::fs::metadata(&jsonl_path)
-                .ok()
-                .and_then(|m| m.modified().ok());
+            // Determine status from hook state (authoritative for activity)
+            let hook_map = self.hook_state.lock().unwrap();
+            let hook_data = hook_map.get(&session_id);
 
-            let recently_modified = last_modified.is_some_and(|t| {
-                t.elapsed().unwrap_or(Duration::from_secs(999)) < Duration::from_secs(3)
-            });
-
-            // Determine status
-            let (status, input_reason) = if let Some(perm) = perm_map.get(&session_id) {
+            let (status, input_reason, active_tool) = if let Some(perm) = perm_map.get(&session_id) {
                 (
                     SessionStatus::NeedsInput,
                     Some(InputReason::Permission(perm.clone())),
+                    None,
                 )
             } else if jsonl_status.has_pending_question {
                 (
@@ -289,12 +288,20 @@ impl SessionMonitor {
                             .question_text
                             .unwrap_or_else(|| "Agent has a question".to_string()),
                     }),
+                    None,
                 )
-            } else if recently_modified {
-                (SessionStatus::Working, None)
+            } else if let Some(hd) = hook_data {
+                if hd.is_idle {
+                    (SessionStatus::Idle, None, None)
+                } else {
+                    let tool = hd.active_tool.as_ref().map(|t| (t.tool.clone(), t.detail.clone()));
+                    (SessionStatus::Working, None, tool)
+                }
             } else {
-                (SessionStatus::Idle, None)
+                // No hook data yet — default to Working (safe assumption for running process)
+                (SessionStatus::Working, None, None)
             };
+            drop(hook_map); // release lock before rest of loop body
 
             let project_name = project_name_from_cwd(&proc_info.cwd);
 
@@ -319,28 +326,21 @@ impl SessionMonitor {
                     status,
                     input_reason,
                     jsonl_path,
-                    last_jsonl_modified: last_modified,
+                    last_jsonl_modified: None,
                     last_status_change,
                     last_seen: Instant::now(),
                     ended_at: None,
-                    active_tool: None,
+                    active_tool,
                 },
             );
         }
 
-        // Handle sessions not found in this scan
+        // Handle sessions not found in this scan — mark as ended immediately
         for (sid, existing) in &self.sessions {
             if seen_sessions.contains_key(sid) {
                 continue;
             }
-            // Grace period: keep session in its current state if seen
-            // recently (handles transient /proc read failures)
-            if existing.status != SessionStatus::Ended
-                && existing.last_seen.elapsed() < Duration::from_secs(10)
-            {
-                seen_sessions.insert(sid.clone(), existing.clone());
-            } else if existing.status != SessionStatus::Ended {
-                // Not seen for >10s, mark as ended
+            if existing.status != SessionStatus::Ended {
                 let mut ended = existing.clone();
                 ended.status = SessionStatus::Ended;
                 ended.ended_at = Some(existing.ended_at.unwrap_or_else(Instant::now));
