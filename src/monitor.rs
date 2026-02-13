@@ -308,8 +308,8 @@ impl SessionMonitor {
                     (SessionStatus::Working, None, tool)
                 }
             } else {
-                // No hook data yet — default to Working (safe assumption for running process)
-                (SessionStatus::Working, None, None)
+                // No hook data yet — default to Idle (if it were working, we'd have hook events)
+                (SessionStatus::Idle, None, None)
             };
             drop(hook_map); // release lock before rest of loop body
 
