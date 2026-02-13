@@ -1,5 +1,8 @@
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::io::Read;
+use std::os::unix::net::UnixListener;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -52,6 +55,69 @@ pub type HookState = Arc<Mutex<HashMap<String, HookSessionData>>>;
 /// Create a new, empty hook state.
 pub fn new_hook_state() -> HookState {
     Arc::new(Mutex::new(HashMap::new()))
+}
+
+/// Returns the path to the daemon Unix socket: `~/.cache/agent-dash/daemon.sock`.
+pub fn socket_path() -> PathBuf {
+    dirs::cache_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("agent-dash")
+        .join("daemon.sock")
+}
+
+/// Spawn a background thread that listens on the Unix socket for hook events.
+///
+/// Each incoming connection is read to completion, trimmed, parsed as a
+/// [`HookEvent`], and applied to `state`.  Parse and I/O errors are logged to
+/// stderr but never crash the listener.
+pub fn start_listener(state: HookState) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let path = socket_path();
+
+        // Ensure parent directory exists.
+        if let Some(parent) = path.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                eprintln!("agent-dash: failed to create socket directory: {e}");
+                return;
+            }
+        }
+
+        // Remove stale socket from a previous run.
+        let _ = std::fs::remove_file(&path);
+
+        let listener = match UnixListener::bind(&path) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("agent-dash: failed to bind socket {}: {e}", path.display());
+                return;
+            }
+        };
+
+        for stream in listener.incoming() {
+            match stream {
+                Ok(mut conn) => {
+                    let mut buf = String::new();
+                    if let Err(e) = conn.read_to_string(&mut buf) {
+                        eprintln!("agent-dash: socket read error: {e}");
+                        continue;
+                    }
+                    let trimmed = buf.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    match serde_json::from_str::<HookEvent>(trimmed) {
+                        Ok(event) => apply_event(&state, event),
+                        Err(e) => {
+                            eprintln!("agent-dash: failed to parse hook event: {e}");
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("agent-dash: socket accept error: {e}");
+                }
+            }
+        }
+    })
 }
 
 /// Apply a hook event to the shared state.
@@ -423,5 +489,65 @@ mod tests {
         let data = map.get("s1").unwrap();
         assert!(!data.is_idle);
         assert!(data.active_tool.is_some());
+    }
+
+    // -----------------------------------------------------------------------
+    // Socket round-trip test
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_socket_roundtrip() {
+        use std::io::Write;
+        use std::os::unix::net::{UnixListener as StdUnixListener, UnixStream};
+
+        let dir = std::env::temp_dir().join(format!("agent-dash-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sock_path = dir.join("test.sock");
+
+        // Clean up any leftover socket from a previous run.
+        let _ = std::fs::remove_file(&sock_path);
+
+        let state = new_hook_state();
+        let state_clone = Arc::clone(&state);
+
+        let listener = StdUnixListener::bind(&sock_path).unwrap();
+
+        // Spawn a thread that accepts exactly one connection, reads + parses + applies.
+        let handle = std::thread::spawn(move || {
+            let (mut conn, _) = listener.accept().unwrap();
+            let mut buf = String::new();
+            conn.read_to_string(&mut buf).unwrap();
+            let event: HookEvent = serde_json::from_str(buf.trim()).unwrap();
+            apply_event(&state_clone, event);
+        });
+
+        // Connect and send a tool_start event.
+        let json = r#"{
+            "event": "tool_start",
+            "session_id": "roundtrip-sess",
+            "tool": "Bash",
+            "detail": "echo hello",
+            "tool_use_id": "tu-rt-1"
+        }"#;
+
+        let mut stream = UnixStream::connect(&sock_path).unwrap();
+        stream.write_all(json.as_bytes()).unwrap();
+        // Shut down the write half so the reader sees EOF.
+        stream.shutdown(std::net::Shutdown::Write).unwrap();
+
+        handle.join().unwrap();
+
+        // Verify the event was applied.
+        let map = state.lock().unwrap();
+        let data = map.get("roundtrip-sess").expect("session should exist");
+        let tool = data.active_tool.as_ref().expect("active tool should be set");
+        assert_eq!(tool.tool, "Bash");
+        assert_eq!(tool.detail, "echo hello");
+        assert_eq!(tool.tool_use_id, "tu-rt-1");
+
+        // Clean up.
+        drop(map);
+        let _ = std::fs::remove_file(&sock_path);
+        let _ = std::fs::remove_dir(&dir);
     }
 }
