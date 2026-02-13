@@ -1,7 +1,10 @@
+use crate::ipc;
+use crate::session::{InputReason, Session, SessionStatus};
 use procfs::process::FDTarget;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 /// Info about a discovered claude process.
 #[derive(Debug, Clone)]
@@ -209,6 +212,128 @@ pub fn parse_jsonl_status(path: &std::path::Path) -> Option<JsonlStatus> {
         has_pending_question: last_was_assistant_with_ask && !last_was_user,
         question_text,
     })
+}
+
+pub struct SessionMonitor {
+    pub sessions: HashMap<String, Session>,
+    claude_projects_dir: PathBuf,
+}
+
+impl SessionMonitor {
+    pub fn new() -> Self {
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
+        let claude_projects_dir = home.join(".claude").join("projects");
+        Self {
+            sessions: HashMap::new(),
+            claude_projects_dir,
+        }
+    }
+
+    /// Full refresh: scan processes, parse JSONL, check IPC.
+    pub fn refresh(&mut self) {
+        let processes = scan_claude_processes();
+        let pending_perms = ipc::scan_pending_permissions();
+        let perm_map: HashMap<String, _> = pending_perms
+            .into_iter()
+            .map(|p| (p.session_id.clone(), p))
+            .collect();
+
+        // Track which sessions are still alive
+        let mut seen_sessions: HashMap<String, Session> = HashMap::new();
+
+        for (_pid, proc_info) in &processes {
+            let slug = cwd_to_project_slug(&proc_info.cwd);
+            let project_dir = self.claude_projects_dir.join(&slug);
+            let Some(jsonl_path) = find_latest_jsonl(&project_dir) else {
+                continue;
+            };
+            let Some(jsonl_status) = parse_jsonl_status(&jsonl_path) else {
+                continue;
+            };
+
+            let session_id = jsonl_status.session_id.clone();
+            // Skip if we already processed this session (dedup for subagents)
+            if seen_sessions.contains_key(&session_id) {
+                continue;
+            }
+
+            let last_modified = std::fs::metadata(&jsonl_path)
+                .ok()
+                .and_then(|m| m.modified().ok());
+
+            let recently_modified = last_modified.is_some_and(|t| {
+                t.elapsed().unwrap_or(Duration::from_secs(999)) < Duration::from_secs(5)
+            });
+
+            // Determine status
+            let (status, input_reason) = if let Some(perm) = perm_map.get(&session_id) {
+                (
+                    SessionStatus::NeedsInput,
+                    Some(InputReason::Permission(perm.clone())),
+                )
+            } else if jsonl_status.has_pending_question {
+                (
+                    SessionStatus::NeedsInput,
+                    Some(InputReason::Question {
+                        text: jsonl_status
+                            .question_text
+                            .unwrap_or_else(|| "Agent has a question".to_string()),
+                    }),
+                )
+            } else if recently_modified {
+                (SessionStatus::Working, None)
+            } else {
+                (SessionStatus::Idle, None)
+            };
+
+            let project_name = project_name_from_cwd(&proc_info.cwd);
+
+            seen_sessions.insert(
+                session_id.clone(),
+                Session {
+                    session_id,
+                    pid: proc_info.pid,
+                    pty: proc_info.pty.clone(),
+                    cwd: proc_info.cwd.clone(),
+                    project_name,
+                    branch: jsonl_status.git_branch,
+                    status,
+                    input_reason,
+                    jsonl_path,
+                    last_jsonl_modified: last_modified,
+                    ended_at: None,
+                },
+            );
+        }
+
+        // Handle sessions that disappeared: mark as Ended
+        for (sid, existing) in &self.sessions {
+            if !seen_sessions.contains_key(sid) && existing.status != SessionStatus::Ended {
+                let mut ended = existing.clone();
+                ended.status = SessionStatus::Ended;
+                ended.ended_at = Some(existing.ended_at.unwrap_or_else(Instant::now));
+                seen_sessions.insert(sid.clone(), ended);
+            }
+        }
+
+        // Remove sessions that have been ended for >5 seconds
+        seen_sessions.retain(|_, s| {
+            if let Some(ended_at) = s.ended_at {
+                ended_at.elapsed() < Duration::from_secs(5)
+            } else {
+                true
+            }
+        });
+
+        self.sessions = seen_sessions;
+    }
+
+    /// Get sessions sorted by status priority (red first, then yellow, then green).
+    pub fn sorted_sessions(&self) -> Vec<&Session> {
+        let mut sessions: Vec<&Session> = self.sessions.values().collect();
+        sessions.sort_by_key(|s| s.status.sort_key());
+        sessions
+    }
 }
 
 #[cfg(test)]
