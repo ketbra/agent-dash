@@ -257,18 +257,29 @@ impl SessionMonitor {
         for (_pid, proc_info) in &processes {
             let slug = cwd_to_project_slug(&proc_info.cwd);
             let project_dir = self.claude_projects_dir.join(&slug);
-            let Some(jsonl_path) = find_latest_jsonl(&project_dir) else {
-                continue;
-            };
-            let Some(jsonl_status) = parse_jsonl_status(&jsonl_path) else {
-                continue;
-            };
+            let jsonl_path = find_latest_jsonl(&project_dir)
+                .unwrap_or_else(|| project_dir.join("unknown.jsonl"));
+            let jsonl_status = parse_jsonl_status(&jsonl_path);
 
-            let session_id = jsonl_status.session_id.clone();
+            // Use JSONL session_id if available, otherwise synthesize from PID
+            let session_id = jsonl_status
+                .as_ref()
+                .map(|s| s.session_id.clone())
+                .unwrap_or_else(|| format!("pid-{}", proc_info.pid));
+
             // Skip if we already processed this session (dedup for subagents)
             if seen_sessions.contains_key(&session_id) {
                 continue;
             }
+
+            let git_branch = jsonl_status
+                .as_ref()
+                .map(|s| s.git_branch.clone())
+                .unwrap_or_default();
+            let has_pending_question = jsonl_status
+                .as_ref()
+                .is_some_and(|s| s.has_pending_question);
+            let question_text = jsonl_status.as_ref().and_then(|s| s.question_text.clone());
 
             // Determine status from hook state (authoritative for activity)
             let hook_map = self.hook_state.lock().unwrap();
@@ -280,12 +291,11 @@ impl SessionMonitor {
                     Some(InputReason::Permission(perm.clone())),
                     None,
                 )
-            } else if jsonl_status.has_pending_question {
+            } else if has_pending_question {
                 (
                     SessionStatus::NeedsInput,
                     Some(InputReason::Question {
-                        text: jsonl_status
-                            .question_text
+                        text: question_text
                             .unwrap_or_else(|| "Agent has a question".to_string()),
                     }),
                     None,
@@ -322,7 +332,7 @@ impl SessionMonitor {
                     pty: proc_info.pty.clone(),
                     cwd: proc_info.cwd.clone(),
                     project_name,
-                    branch: jsonl_status.git_branch,
+                    branch: git_branch,
                     status,
                     input_reason,
                     jsonl_path,
