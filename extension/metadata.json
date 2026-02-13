@@ -1,0 +1,8 @@
+{
+  "uuid": "agent-dash@mfeinber",
+  "name": "Agent Dash",
+  "description": "Side panel showing Claude Code session status with permission controls",
+  "version": 1,
+  "shell-version": ["49"],
+  "url": ""
+}
