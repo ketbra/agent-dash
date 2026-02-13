@@ -7,7 +7,7 @@ use std::time::Instant;
 pub enum SessionStatus {
     /// Needs user input (permission prompt or AskUserQuestion)
     NeedsInput,
-    /// Actively working (JSONL recently modified)
+    /// Actively working (from hook events)
     Working,
     /// Idle at prompt
     Idle,
@@ -55,11 +55,8 @@ pub struct Session {
     pub status: SessionStatus,
     pub input_reason: Option<InputReason>,
     pub jsonl_path: PathBuf,
-    pub last_jsonl_modified: Option<std::time::SystemTime>,
     /// Unix epoch seconds when the status last changed.
     pub last_status_change: u64,
-    /// When the process was last seen in a /proc scan.
-    pub last_seen: Instant,
     /// When the process was first detected as ended (for fade-out delay).
     pub ended_at: Option<Instant>,
     /// Active tool info from hook events (if any).
@@ -204,9 +201,7 @@ mod tests {
             status: SessionStatus::Working,
             input_reason: None,
             jsonl_path: PathBuf::new(),
-            last_jsonl_modified: None,
             last_status_change: 1000,
-            last_seen: Instant::now(),
             ended_at: None,
             active_tool: None,
         };
@@ -237,9 +232,7 @@ mod tests {
             status: SessionStatus::Working,
             input_reason: None,
             jsonl_path: PathBuf::new(),
-            last_jsonl_modified: None,
             last_status_change: 1000,
-            last_seen: Instant::now(),
             ended_at: None,
             active_tool: Some(("Bash".into(), "cargo test".into())),
         };
@@ -262,9 +255,7 @@ mod tests {
             status: SessionStatus::Idle,
             input_reason: None,
             jsonl_path: PathBuf::new(),
-            last_jsonl_modified: None,
             last_status_change: 1000,
-            last_seen: Instant::now(),
             ended_at: None,
             active_tool: None,
         };
