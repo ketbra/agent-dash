@@ -198,7 +198,6 @@ export default class AgentDashExtension extends Extension {
         const pill = new St.BoxLayout({
             vertical: true,
             style_class: 'agent-dash-pill',
-            reactive: true,
         });
 
         // Status dot + label
@@ -220,33 +219,39 @@ export default class AgentDashExtension extends Extension {
         const labelText = `${dot} ${session.project_name}${branch}`;
         const styleClass = styleClasses[session.status] || 'agent-dash-label-grey';
 
-        const label = new St.Label({
-            text: labelText,
+        // Clickable label row for expand/collapse
+        const labelBtn = new St.Button({
             style_class: styleClass,
             reactive: true,
+            x_expand: true,
         });
-        pill.add_child(label);
+        labelBtn.set_child(new St.Label({text: labelText}));
+        pill.add_child(labelBtn);
 
         const isExpanded = this._expandedSession === session.session_id;
 
-        // Click to expand/collapse
-        pill.connect('button-press-event', () => {
+        labelBtn.connect('clicked', () => {
             if (isExpanded) {
                 this._expandedSession = null;
             } else if (session.input_reason) {
                 this._expandedSession = session.session_id;
             }
             this._refresh();
-            return true; // consume event
         });
 
         // Expanded detail
         if (isExpanded && session.input_reason) {
             const reason = session.input_reason;
             if (reason.type === 'permission') {
-                const detailText = reason.command
-                    ? `${reason.tool}: ${reason.command}`
-                    : `${reason.tool}: ${reason.detail || '?'}`;
+                let detailText;
+                if (reason.command) {
+                    // Truncate long commands
+                    const cmd = reason.command.length > 80
+                        ? reason.command.slice(0, 77) + '...' : reason.command;
+                    detailText = `${reason.tool}: ${cmd}`;
+                } else {
+                    detailText = `${reason.tool}`;
+                }
                 const detail = new St.Label({
                     text: detailText,
                     style_class: 'agent-dash-detail',
