@@ -56,16 +56,26 @@ pub fn write_permission_response(session_id: &str, response: &PermissionResponse
 }
 
 /// Scan the IPC directory for all pending permission requests.
+/// Ignores requests older than 150 seconds (the hook times out at 120s).
 pub fn scan_pending_permissions() -> Vec<PermissionRequest> {
     let base = ipc_base_dir();
     let Ok(entries) = std::fs::read_dir(&base) else {
         return vec![];
     };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
     entries
         .filter_map(|e| e.ok())
         .filter_map(|e| {
             let session_id = e.file_name().to_string_lossy().to_string();
-            read_pending_permission(&session_id)
+            let req = read_pending_permission(&session_id)?;
+            // Ignore stale requests (hook process likely dead)
+            if now.saturating_sub(req.timestamp) > 150 {
+                return None;
+            }
+            Some(req)
         })
         .collect()
 }

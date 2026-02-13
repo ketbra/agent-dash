@@ -7,10 +7,10 @@ import Gio from 'gi://Gio';
 const PANEL_WIDTH = 220;
 const REFRESH_INTERVAL_SECONDS = 2;
 const STATE_FILE = GLib.build_filenamev([
-    GLib.get_home_dir(), '.cache', 'agent-dash', 'state.json'
+    GLib.get_user_cache_dir(), 'agent-dash', 'state.json'
 ]);
 const IPC_BASE = GLib.build_filenamev([
-    GLib.get_home_dir(), '.cache', 'agent-dash', 'sessions'
+    GLib.get_user_cache_dir(), 'agent-dash', 'sessions'
 ]);
 
 export default class AgentDashExtension extends Extension {
@@ -168,7 +168,7 @@ export default class AgentDashExtension extends Extension {
                     style_class: 'agent-dash-button agent-dash-similar',
                 });
                 similarBtn.connect('clicked', () => {
-                    this._writePermissionResponse(session.session_id, 'allow', null);
+                    this._writePermissionResponse(session.session_id, 'allow_similar', null);
                     this._expandedSession = null;
                     this._refresh();
                 });

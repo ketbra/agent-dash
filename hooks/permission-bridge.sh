@@ -58,6 +58,20 @@ for i in $(seq 1 600); do
                         }
                     }
                 }'
+        elif [ "$BEHAVIOR" = "allow_similar" ]; then
+            jq -n \
+                --arg tool "$TOOL" \
+                '{
+                    "hookSpecificOutput": {
+                        "hookEventName": "PermissionRequest",
+                        "decision": {
+                            "behavior": "allow",
+                            "updatedPermissions": [
+                                {"tool": $tool, "permission": "allow"}
+                            ]
+                        }
+                    }
+                }'
         else
             jq -n '{
                 "hookSpecificOutput": {
