@@ -1,6 +1,7 @@
 mod ipc;
 mod monitor;
 mod session;
+mod socket;
 
 use monitor::SessionMonitor;
 use session::DashState;
