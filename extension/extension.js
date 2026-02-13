@@ -5,13 +5,16 @@ import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 
 const PANEL_WIDTH = 220;
-const REFRESH_INTERVAL_SECONDS = 2;
+const REFRESH_INTERVAL_SECONDS = 1;
 const STATE_FILE = GLib.build_filenamev([
     GLib.get_user_cache_dir(), 'agent-dash', 'state.json'
 ]);
 const IPC_BASE = GLib.build_filenamev([
     GLib.get_user_cache_dir(), 'agent-dash', 'sessions'
 ]);
+
+const SORT_RECENT = 'recent';
+const SORT_ALPHA = 'alpha';
 
 export default class AgentDashExtension extends Extension {
     enable() {
@@ -37,6 +40,7 @@ export default class AgentDashExtension extends Extension {
         });
 
         this._expandedSession = null;
+        this._sortMode = SORT_RECENT;
         this._refresh();
         this._timeoutId = GLib.timeout_add_seconds(
             GLib.PRIORITY_DEFAULT,
@@ -74,8 +78,22 @@ export default class AgentDashExtension extends Extension {
             return; // File doesn't exist yet or is being written
         }
 
-        // Preserve scroll position and expanded state
         this._panel.destroy_all_children();
+
+        // Sort toggle button
+        const sortLabel = this._sortMode === SORT_RECENT
+            ? '\u{1F552} Recent' : '\u{1F524} A\u2013Z';
+        const sortBtn = new St.Button({
+            label: sortLabel,
+            style_class: 'agent-dash-button agent-dash-sort-toggle',
+            reactive: true,
+        });
+        sortBtn.connect('clicked', () => {
+            this._sortMode = this._sortMode === SORT_RECENT
+                ? SORT_ALPHA : SORT_RECENT;
+            this._refresh();
+        });
+        this._panel.add_child(sortBtn);
 
         const sessions = data.sessions || [];
         if (sessions.length === 0) {
@@ -87,7 +105,25 @@ export default class AgentDashExtension extends Extension {
             return;
         }
 
-        for (const session of sessions) {
+        // Sort sessions
+        const sorted = [...sessions];
+        if (this._sortMode === SORT_ALPHA) {
+            sorted.sort((a, b) => {
+                const nameA = a.project_name.toLowerCase();
+                const nameB = b.project_name.toLowerCase();
+                if (nameA !== nameB) return nameA < nameB ? -1 : 1;
+                const branchA = (a.branch || '').toLowerCase();
+                const branchB = (b.branch || '').toLowerCase();
+                return branchA < branchB ? -1 : branchA > branchB ? 1 : 0;
+            });
+        } else {
+            // Recent: most recently changed status first
+            sorted.sort((a, b) =>
+                (b.last_status_change || 0) - (a.last_status_change || 0)
+            );
+        }
+
+        for (const session of sorted) {
             this._addSessionPill(session);
         }
     }

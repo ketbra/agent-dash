@@ -56,6 +56,8 @@ pub struct Session {
     pub input_reason: Option<InputReason>,
     pub jsonl_path: PathBuf,
     pub last_jsonl_modified: Option<std::time::SystemTime>,
+    /// Unix epoch seconds when the status last changed.
+    pub last_status_change: u64,
     /// When the process was first detected as ended (for fade-out delay).
     pub ended_at: Option<Instant>,
 }
@@ -77,6 +79,7 @@ pub struct DashSession {
     pub project_name: String,
     pub branch: String,
     pub status: String,
+    pub last_status_change: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_reason: Option<DashInputReason>,
 }
@@ -129,6 +132,7 @@ impl Session {
             project_name: self.project_name.clone(),
             branch: self.branch.clone(),
             status,
+            last_status_change: self.last_status_change,
             input_reason,
         }
     }
@@ -166,6 +170,7 @@ mod tests {
             input_reason: None,
             jsonl_path: PathBuf::new(),
             last_jsonl_modified: None,
+            last_status_change: 1000,
             ended_at: None,
         };
         let ds = s.to_dash_session();

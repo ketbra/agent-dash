@@ -4,7 +4,7 @@ use procfs::process::FDTarget;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 /// Info about a discovered claude process.
 #[derive(Debug, Clone)]
@@ -272,7 +272,7 @@ impl SessionMonitor {
                 .and_then(|m| m.modified().ok());
 
             let recently_modified = last_modified.is_some_and(|t| {
-                t.elapsed().unwrap_or(Duration::from_secs(999)) < Duration::from_secs(5)
+                t.elapsed().unwrap_or(Duration::from_secs(999)) < Duration::from_secs(3)
             });
 
             // Determine status
@@ -298,6 +298,15 @@ impl SessionMonitor {
 
             let project_name = project_name_from_cwd(&proc_info.cwd);
 
+            let now_epoch = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let last_status_change = match self.sessions.get(&session_id) {
+                Some(prev) if prev.status == status => prev.last_status_change,
+                _ => now_epoch,
+            };
+
             seen_sessions.insert(
                 session_id.clone(),
                 Session {
@@ -311,6 +320,7 @@ impl SessionMonitor {
                     input_reason,
                     jsonl_path,
                     last_jsonl_modified: last_modified,
+                    last_status_change,
                     ended_at: None,
                 },
             );
@@ -338,11 +348,9 @@ impl SessionMonitor {
         self.sessions = seen_sessions;
     }
 
-    /// Get sessions sorted by status priority (red first, then yellow, then green).
-    pub fn sorted_sessions(&self) -> Vec<&Session> {
-        let mut sessions: Vec<&Session> = self.sessions.values().collect();
-        sessions.sort_by_key(|s| s.status.sort_key());
-        sessions
+    /// Get all sessions (unsorted — the extension handles sort order).
+    pub fn sessions(&self) -> impl Iterator<Item = &Session> {
+        self.sessions.values()
     }
 }
 

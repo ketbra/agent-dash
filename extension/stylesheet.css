@@ -59,6 +59,12 @@
     color: #ffc832;
 }
 
+.agent-dash-sort-toggle {
+    background-color: rgba(60, 60, 60, 0.6);
+    color: #a0a0a0;
+    margin-bottom: 4px;
+}
+
 .agent-dash-empty {
     color: #808080;
     font-size: 10pt;

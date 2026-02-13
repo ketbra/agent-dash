@@ -36,14 +36,13 @@ fn main() {
     loop {
         monitor.refresh();
         let sessions: Vec<_> = monitor
-            .sorted_sessions()
-            .iter()
+            .sessions()
             .map(|s| s.to_dash_session())
             .collect();
         let state = DashState { sessions };
         if let Err(e) = write_state(&state) {
             eprintln!("error writing state: {}", e);
         }
-        std::thread::sleep(Duration::from_secs(2));
+        std::thread::sleep(Duration::from_secs(1));
     }
 }
