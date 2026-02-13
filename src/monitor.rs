@@ -321,18 +321,32 @@ impl SessionMonitor {
                     jsonl_path,
                     last_jsonl_modified: last_modified,
                     last_status_change,
+                    last_seen: Instant::now(),
                     ended_at: None,
                 },
             );
         }
 
-        // Handle sessions that disappeared: mark as Ended
+        // Handle sessions not found in this scan
         for (sid, existing) in &self.sessions {
-            if !seen_sessions.contains_key(sid) && existing.status != SessionStatus::Ended {
+            if seen_sessions.contains_key(sid) {
+                continue;
+            }
+            // Grace period: keep session in its current state if seen
+            // recently (handles transient /proc read failures)
+            if existing.status != SessionStatus::Ended
+                && existing.last_seen.elapsed() < Duration::from_secs(10)
+            {
+                seen_sessions.insert(sid.clone(), existing.clone());
+            } else if existing.status != SessionStatus::Ended {
+                // Not seen for >10s, mark as ended
                 let mut ended = existing.clone();
                 ended.status = SessionStatus::Ended;
                 ended.ended_at = Some(existing.ended_at.unwrap_or_else(Instant::now));
                 seen_sessions.insert(sid.clone(), ended);
+            } else {
+                // Already ended, keep for fade-out
+                seen_sessions.insert(sid.clone(), existing.clone());
             }
         }
 

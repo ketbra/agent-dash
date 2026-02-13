@@ -58,6 +58,8 @@ pub struct Session {
     pub last_jsonl_modified: Option<std::time::SystemTime>,
     /// Unix epoch seconds when the status last changed.
     pub last_status_change: u64,
+    /// When the process was last seen in a /proc scan.
+    pub last_seen: Instant,
     /// When the process was first detected as ended (for fade-out delay).
     pub ended_at: Option<Instant>,
 }
@@ -171,6 +173,7 @@ mod tests {
             jsonl_path: PathBuf::new(),
             last_jsonl_modified: None,
             last_status_change: 1000,
+            last_seen: Instant::now(),
             ended_at: None,
         };
         let ds = s.to_dash_session();
