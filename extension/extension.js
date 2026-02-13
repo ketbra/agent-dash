@@ -3,6 +3,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import St from 'gi://St';
 import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
+import GSound from 'gi://GSound';
 
 const PANEL_WIDTH = 220;
 const REFRESH_INTERVAL_SECONDS = 1;
@@ -15,6 +16,10 @@ const IPC_BASE = GLib.build_filenamev([
 
 const SORT_RECENT = 'recent';
 const SORT_ALPHA = 'alpha';
+
+// Sound event IDs from freedesktop sound theme
+const SOUND_FINISHED = 'complete';
+const SOUND_NEEDS_INPUT = 'dialog-warning';
 
 export default class AgentDashExtension extends Extension {
     enable() {
@@ -41,6 +46,18 @@ export default class AgentDashExtension extends Extension {
 
         this._expandedSession = null;
         this._sortMode = SORT_RECENT;
+        this._muted = false;
+        this._previousStatuses = {}; // session_id -> status string
+
+        // Initialize GSound
+        try {
+            this._soundCtx = new GSound.Context();
+            this._soundCtx.init(null);
+        } catch (e) {
+            console.warn('agent-dash: GSound init failed:', e.message);
+            this._soundCtx = null;
+        }
+
         this._refresh();
         this._timeoutId = GLib.timeout_add_seconds(
             GLib.PRIORITY_DEFAULT,
@@ -63,6 +80,34 @@ export default class AgentDashExtension extends Extension {
             this._panel = null;
         }
         this._expandedSession = null;
+        this._soundCtx = null;
+        this._previousStatuses = {};
+    }
+
+    _playSound(eventId) {
+        if (this._muted || !this._soundCtx) return;
+        try {
+            this._soundCtx.play_simple({'event.id': eventId}, null);
+        } catch (e) {
+            console.error('agent-dash: sound error:', e.message);
+        }
+    }
+
+    _checkStatusTransitions(sessions) {
+        const currentStatuses = {};
+        for (const s of sessions) {
+            currentStatuses[s.session_id] = s.status;
+            const prev = this._previousStatuses[s.session_id];
+            if (prev === undefined) continue; // new session, no sound
+            if (prev === s.status) continue; // no change
+
+            if (s.status === 'idle' && (prev === 'working' || prev === 'needs_input')) {
+                this._playSound(SOUND_FINISHED);
+            } else if (s.status === 'needs_input' && prev !== 'needs_input') {
+                this._playSound(SOUND_NEEDS_INPUT);
+            }
+        }
+        this._previousStatuses = currentStatuses;
     }
 
     _refresh() {
@@ -78,24 +123,45 @@ export default class AgentDashExtension extends Extension {
             return; // File doesn't exist yet or is being written
         }
 
+        const sessions = data.sessions || [];
+
+        // Check for status transitions and play sounds
+        this._checkStatusTransitions(sessions);
+
         this._panel.destroy_all_children();
 
-        // Sort toggle button
+        // Top toolbar: sort toggle + mute toggle
+        const toolbar = new St.BoxLayout({vertical: false});
+
         const sortLabel = this._sortMode === SORT_RECENT
             ? '\u{1F552} Recent' : '\u{1F524} A\u2013Z';
         const sortBtn = new St.Button({
             label: sortLabel,
             style_class: 'agent-dash-button agent-dash-sort-toggle',
             reactive: true,
+            x_expand: true,
         });
         sortBtn.connect('clicked', () => {
             this._sortMode = this._sortMode === SORT_RECENT
                 ? SORT_ALPHA : SORT_RECENT;
             this._refresh();
         });
-        this._panel.add_child(sortBtn);
+        toolbar.add_child(sortBtn);
 
-        const sessions = data.sessions || [];
+        const muteLabel = this._muted ? '\u{1F507}' : '\u{1F50A}';
+        const muteBtn = new St.Button({
+            label: muteLabel,
+            style_class: 'agent-dash-button agent-dash-mute-toggle',
+            reactive: true,
+        });
+        muteBtn.connect('clicked', () => {
+            this._muted = !this._muted;
+            this._refresh();
+        });
+        toolbar.add_child(muteBtn);
+
+        this._panel.add_child(toolbar);
+
         if (sessions.length === 0) {
             const empty = new St.Label({
                 text: 'No active Claude sessions',
