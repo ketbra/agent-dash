@@ -60,16 +60,6 @@ pub struct Session {
     pub ended_at: Option<Instant>,
 }
 
-impl Session {
-    pub fn label(&self) -> String {
-        if self.branch.is_empty() || self.branch == "main" {
-            self.project_name.clone()
-        } else {
-            format!("{} ({})", self.project_name, self.branch)
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Serializable types written by the daemon for the GNOME extension to read.
 // ---------------------------------------------------------------------------
@@ -153,42 +143,6 @@ mod tests {
         assert!(SessionStatus::NeedsInput.sort_key() < SessionStatus::Working.sort_key());
         assert!(SessionStatus::Working.sort_key() < SessionStatus::Idle.sort_key());
         assert!(SessionStatus::Idle.sort_key() < SessionStatus::Ended.sort_key());
-    }
-
-    #[test]
-    fn label_without_branch() {
-        let s = Session {
-            session_id: "abc".into(),
-            pid: 1,
-            pty: PathBuf::from("/dev/pts/0"),
-            cwd: PathBuf::from("/home/user/project"),
-            project_name: "project".into(),
-            branch: "main".into(),
-            status: SessionStatus::Idle,
-            input_reason: None,
-            jsonl_path: PathBuf::new(),
-            last_jsonl_modified: None,
-            ended_at: None,
-        };
-        assert_eq!(s.label(), "project");
-    }
-
-    #[test]
-    fn label_with_branch() {
-        let s = Session {
-            session_id: "abc".into(),
-            pid: 1,
-            pty: PathBuf::from("/dev/pts/0"),
-            cwd: PathBuf::from("/home/user/project"),
-            project_name: "project".into(),
-            branch: "feature-x".into(),
-            status: SessionStatus::Idle,
-            input_reason: None,
-            jsonl_path: PathBuf::new(),
-            last_jsonl_modified: None,
-            ended_at: None,
-        };
-        assert_eq!(s.label(), "project (feature-x)");
     }
 
     #[test]
