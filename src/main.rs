@@ -6,6 +6,9 @@ mod session;
 use app::AgentDashApp;
 
 fn main() -> eframe::Result<()> {
+    // Force X11/XWayland backend — GNOME Wayland doesn't support always-on-top from clients
+    // SAFETY: called before any threads are spawned
+    unsafe { std::env::set_var("WINIT_UNIX_BACKEND", "x11") };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_decorations(false)
