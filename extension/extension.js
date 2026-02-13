@@ -213,11 +213,41 @@ export default class AgentDashExtension extends Extension {
             idle: 'agent-dash-label-green',
             ended: 'agent-dash-label-grey',
         };
-        const dot = dots[session.status] || '\u{26AA}';
         const branch = (!session.branch || session.branch === 'main')
             ? '' : ` (${session.branch})`;
-        const labelText = `${dot} ${session.project_name}${branch}`;
         const styleClass = styleClasses[session.status] || 'agent-dash-label-grey';
+
+        // Header row: tool icon (or emoji dot) + project name
+        const headerRow = new St.BoxLayout({vertical: false});
+
+        if (session.active_tool && session.status === 'working') {
+            const icon = new St.Icon({
+                icon_name: session.active_tool.icon,
+                icon_size: 14,
+                style_class: 'agent-dash-tool-icon',
+                reactive: true,
+            });
+
+            const tooltipText = session.active_tool.detail
+                ? (session.active_tool.detail.length > 80
+                    ? session.active_tool.detail.slice(0, 77) + '...'
+                    : session.active_tool.detail)
+                : '';
+            const tooltip = new St.Label({
+                text: tooltipText,
+                style_class: 'agent-dash-tooltip',
+                visible: false,
+            });
+            icon.connect('enter-event', () => { tooltip.visible = true; });
+            icon.connect('leave-event', () => { tooltip.visible = false; });
+
+            headerRow.add_child(icon);
+            headerRow.add_child(tooltip);
+        }
+
+        const labelText = (session.active_tool && session.status === 'working')
+            ? `${session.project_name}${branch}`
+            : `${dots[session.status] || '\u{26AA}'} ${session.project_name}${branch}`;
 
         // Clickable label row for expand/collapse
         const labelBtn = new St.Button({
@@ -226,7 +256,8 @@ export default class AgentDashExtension extends Extension {
             x_expand: true,
         });
         labelBtn.set_child(new St.Label({text: labelText}));
-        pill.add_child(labelBtn);
+        headerRow.add_child(labelBtn);
+        pill.add_child(headerRow);
 
         const isExpanded = this._expandedSession === session.session_id;
 
