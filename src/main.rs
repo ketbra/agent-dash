@@ -32,7 +32,11 @@ fn write_state(state: &DashState) -> std::io::Result<()> {
 
 fn main() {
     eprintln!("agent-dashd starting, writing to {:?}", state_file_path());
-    let mut monitor = SessionMonitor::new();
+
+    let hook_state = socket::new_hook_state();
+    let _listener_handle = socket::start_listener(hook_state.clone());
+
+    let mut monitor = SessionMonitor::new(hook_state);
 
     loop {
         monitor.refresh();
