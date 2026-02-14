@@ -1,0 +1,11 @@
+[package]
+name = "agent-dash-hook"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+agent-dash-core = { path = "../agent-dash-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+dirs = { workspace = true }
+interprocess = { version = "2" }
