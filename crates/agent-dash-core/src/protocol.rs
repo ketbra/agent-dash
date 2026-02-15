@@ -78,6 +78,20 @@ pub enum ClientRequest {
     ListSessions {
         project: String,
     },
+    #[serde(rename = "register_wrapper")]
+    RegisterWrapper {
+        session_id: String,
+        agent: String,
+    },
+    #[serde(rename = "unregister_wrapper")]
+    UnregisterWrapper {
+        session_id: String,
+    },
+    #[serde(rename = "send_prompt")]
+    SendPrompt {
+        session_id: String,
+        text: String,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -115,6 +129,18 @@ pub enum ServerEvent {
     SessionList {
         project: String,
         sessions: Vec<SessionListEntry>,
+    },
+    #[serde(rename = "prompt_sent")]
+    PromptSent {
+        session_id: String,
+    },
+    #[serde(rename = "inject_prompt")]
+    InjectPrompt {
+        text: String,
+    },
+    #[serde(rename = "error")]
+    Error {
+        message: String,
     },
 }
 
@@ -438,5 +464,62 @@ mod tests {
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"main\":true"));
+    }
+
+    // -- Wrapper registration and prompt injection --
+
+    #[test]
+    fn deserialize_register_wrapper() {
+        let json = r#"{"method":"register_wrapper","session_id":"s1","agent":"claude"}"#;
+        let req: ClientRequest = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequest::RegisterWrapper { session_id, agent } => {
+                assert_eq!(session_id, "s1");
+                assert_eq!(agent, "claude");
+            }
+            _ => panic!("expected RegisterWrapper"),
+        }
+    }
+
+    #[test]
+    fn deserialize_unregister_wrapper() {
+        let json = r#"{"method":"unregister_wrapper","session_id":"s1"}"#;
+        let req: ClientRequest = serde_json::from_str(json).unwrap();
+        assert!(matches!(req, ClientRequest::UnregisterWrapper { .. }));
+    }
+
+    #[test]
+    fn deserialize_send_prompt() {
+        let json = r#"{"method":"send_prompt","session_id":"s1","text":"fix the tests"}"#;
+        let req: ClientRequest = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequest::SendPrompt { session_id, text } => {
+                assert_eq!(session_id, "s1");
+                assert_eq!(text, "fix the tests");
+            }
+            _ => panic!("expected SendPrompt"),
+        }
+    }
+
+    #[test]
+    fn serialize_prompt_sent() {
+        let event = ServerEvent::PromptSent { session_id: "s1".into() };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"event\":\"prompt_sent\""));
+    }
+
+    #[test]
+    fn serialize_inject_prompt() {
+        let event = ServerEvent::InjectPrompt { text: "hello".into() };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"event\":\"inject_prompt\""));
+        assert!(json.contains("\"text\":\"hello\""));
+    }
+
+    #[test]
+    fn serialize_error() {
+        let event = ServerEvent::Error { message: "not wrapped".into() };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"event\":\"error\""));
     }
 }
