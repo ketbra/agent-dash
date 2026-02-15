@@ -3,3 +3,4 @@ pub mod hook_listener;
 pub mod messages;
 pub mod scanner;
 pub mod state;
+pub mod watcher;
