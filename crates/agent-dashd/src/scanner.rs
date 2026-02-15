@@ -13,10 +13,14 @@ pub struct ClaudeProcess {
 /// Returns a map of PID -> ClaudeProcess.
 /// Uses `sysinfo` for cross-platform process discovery.
 pub fn scan_claude_processes() -> HashMap<u32, ClaudeProcess> {
-    use sysinfo::System;
+    use sysinfo::{ProcessRefreshKind, System};
 
     let mut system = System::new();
-    system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+    system.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::everything(),
+    );
     let mut result = HashMap::new();
     for (pid, process) in system.processes() {
         let name = process.name().to_string_lossy();

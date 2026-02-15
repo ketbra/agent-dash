@@ -113,10 +113,10 @@ async fn main() {
                         subscribers.push(tx);
                     }
                     ClientMessage::GetState { reply } => {
-                        let dash = DashState {
+                        let event = ServerEvent::StateUpdate {
                             sessions: state.to_dash_sessions(),
                         };
-                        if let Ok(json) = protocol::encode_line(&dash) {
+                        if let Ok(json) = protocol::encode_line(&event) {
                             let _ = reply.send(json);
                         }
                     }
