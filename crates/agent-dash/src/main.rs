@@ -1,4 +1,11 @@
 mod agents;
+mod client_listener;
+mod daemon;
+mod hook_listener;
+mod messages;
+mod scanner;
+mod state;
+mod watcher;
 
 use clap::{Parser, Subcommand};
 
@@ -108,7 +115,8 @@ enum DaemonAction {
     Status,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
@@ -119,9 +127,17 @@ fn main() {
             Commands::Run { agent, args } => {
                 println!("run: not yet implemented (agent={agent}, args={args:?})");
             }
-            Commands::Daemon { action } => {
-                println!("daemon: not yet implemented (action={action:?})");
-            }
+            Commands::Daemon { action } => match action {
+                DaemonAction::Start => {
+                    daemon::run().await;
+                }
+                DaemonAction::Stop => {
+                    println!("daemon stop: not yet implemented");
+                }
+                DaemonAction::Status => {
+                    println!("daemon status: not yet implemented");
+                }
+            },
             Commands::Status => unreachable!(),
             Commands::Messages {
                 session_id,
