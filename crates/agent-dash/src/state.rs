@@ -20,6 +20,8 @@ pub struct InternalSession {
     pub has_pending_question: bool,
     pub question_text: Option<String>,
     pub watch_offset: Option<u64>,
+    pub wrapped: bool,
+    pub agent: Option<String>,
 }
 
 /// A pending permission request.
@@ -70,6 +72,8 @@ impl DaemonState {
                 has_pending_question: false,
                 question_text: None,
                 watch_offset: None,
+                wrapped: false,
+                agent: None,
             });
     }
 

@@ -1,5 +1,5 @@
 use agent_dash_core::paths;
-use agent_dash_core::protocol::{self, ClientRequest, HookPermissionDecision};
+use agent_dash_core::protocol::{self, ClientRequest, HookPermissionDecision, ServerEvent};
 use interprocess::local_socket::{
     tokio::prelude::*,
     GenericFilePath, ListenerOptions,
@@ -51,6 +51,22 @@ pub enum ClientMessage {
     /// Client requests all sessions for a project.
     ListSessions {
         project: String,
+        reply: oneshot::Sender<String>,
+    },
+    /// Wrapper registering itself.
+    RegisterWrapper {
+        session_id: String,
+        agent: String,
+        prompt_tx: mpsc::Sender<String>,
+    },
+    /// Wrapper unregistering.
+    UnregisterWrapper {
+        session_id: String,
+    },
+    /// Client requesting prompt injection.
+    SendPrompt {
+        session_id: String,
+        text: String,
         reply: oneshot::Sender<String>,
     },
 }
@@ -250,9 +266,50 @@ async fn handle_client_connection(
                     let _ = writer.write_all(json.as_bytes()).await;
                 }
             }
-            // Wrapper-related requests will be handled in a future task.
-            _ => {
-                eprintln!("agent-dashd: unhandled client request");
+            ClientRequest::RegisterWrapper { session_id, agent } => {
+                // Create a channel for prompt injection.
+                let (prompt_tx, mut prompt_rx) = mpsc::channel::<String>(16);
+                let _ = tx
+                    .send(ClientMessage::RegisterWrapper {
+                        session_id: session_id.clone(),
+                        agent,
+                        prompt_tx,
+                    })
+                    .await;
+
+                // Stream prompts to this wrapper until disconnect.
+                while let Some(text) = prompt_rx.recv().await {
+                    let event = ServerEvent::InjectPrompt { text };
+                    if let Ok(line) = protocol::encode_line(&event) {
+                        if writer.write_all(line.as_bytes()).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+
+                // Clean up on disconnect.
+                let _ = tx
+                    .send(ClientMessage::UnregisterWrapper { session_id })
+                    .await;
+                return;
+            }
+            ClientRequest::UnregisterWrapper { session_id } => {
+                let _ = tx
+                    .send(ClientMessage::UnregisterWrapper { session_id })
+                    .await;
+            }
+            ClientRequest::SendPrompt { session_id, text } => {
+                let (reply_tx, reply_rx) = oneshot::channel();
+                let _ = tx
+                    .send(ClientMessage::SendPrompt {
+                        session_id,
+                        text,
+                        reply: reply_tx,
+                    })
+                    .await;
+                if let Ok(json) = reply_rx.await {
+                    let _ = writer.write_all(json.as_bytes()).await;
+                }
             }
         }
     }

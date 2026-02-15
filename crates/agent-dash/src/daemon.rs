@@ -43,6 +43,7 @@ pub async fn run() {
         .expect("failed to create file watcher");
     let mut message_subscribers: HashMap<String, Vec<(String, mpsc::Sender<String>)>> =
         HashMap::new();
+    let mut wrapper_channels: HashMap<String, mpsc::Sender<String>> = HashMap::new();
 
     let mut scan_interval = tokio::time::interval(Duration::from_secs(5));
     let mut write_interval = tokio::time::interval(Duration::from_millis(500));
@@ -295,6 +296,49 @@ pub async fn run() {
                             sessions: entries,
                         };
                         let _ = reply.send(protocol::encode_line(&event).unwrap_or_default());
+                    }
+                    ClientMessage::RegisterWrapper {
+                        session_id,
+                        agent,
+                        prompt_tx,
+                    } => {
+                        state.ensure_session(&session_id);
+                        if let Some(session) = state.sessions.get_mut(&session_id) {
+                            session.wrapped = true;
+                            session.agent = Some(agent);
+                        }
+                        wrapper_channels.insert(session_id, prompt_tx);
+                        state_dirty = true;
+                        broadcast_state(&mut subscribers, &state);
+                    }
+                    ClientMessage::UnregisterWrapper { session_id } => {
+                        wrapper_channels.remove(&session_id);
+                        if let Some(session) = state.sessions.get_mut(&session_id) {
+                            session.wrapped = false;
+                            session.agent = None;
+                        }
+                        state_dirty = true;
+                        broadcast_state(&mut subscribers, &state);
+                    }
+                    ClientMessage::SendPrompt {
+                        session_id,
+                        text,
+                        reply,
+                    } => {
+                        let response = if let Some(prompt_tx) = wrapper_channels.get(&session_id) {
+                            if prompt_tx.try_send(text).is_ok() {
+                                ServerEvent::PromptSent { session_id }
+                            } else {
+                                ServerEvent::Error {
+                                    message: "wrapper channel full or closed".into(),
+                                }
+                            }
+                        } else {
+                            ServerEvent::Error {
+                                message: "session is not wrapped".into(),
+                            }
+                        };
+                        let _ = reply.send(protocol::encode_line(&response).unwrap_or_default());
                     }
                 }
             }
