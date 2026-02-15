@@ -86,8 +86,11 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
         })
         .expect("failed to open pty");
 
-    // Build the command.
+    // Build the command with the current working directory.
     let mut cmd = CommandBuilder::new(profile.binary);
+    if let Ok(cwd) = std::env::current_dir() {
+        cmd.cwd(cwd);
+    }
     for arg in args {
         cmd.arg(arg);
     }
