@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/agent-dash",
     "crates/agent-dash-core",
     "crates/agent-dashd",
     "crates/agent-dash-hook",
@@ -16,3 +17,6 @@ interprocess = { version = "2", features = ["tokio"] }
 sysinfo = "0.34"
 notify = "7"
 comrak = { version = "0.36", default-features = false }
+clap = { version = "4", features = ["derive"] }
+portable-pty = "0.9"
+crossterm = "0.28"
