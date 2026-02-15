@@ -31,6 +31,28 @@ pub enum ClientMessage {
         detail: String,
         reply: oneshot::Sender<HookPermissionDecision>,
     },
+    /// Client requests last N messages from a session.
+    GetMessages {
+        session_id: String,
+        format: String,
+        limit: usize,
+        reply: oneshot::Sender<String>,
+    },
+    /// Client wants to stream new messages from a session.
+    WatchSession {
+        session_id: String,
+        format: String,
+        tx: mpsc::Sender<String>,
+    },
+    /// Client stops streaming messages from a session.
+    UnwatchSession {
+        session_id: String,
+    },
+    /// Client requests all sessions for a project.
+    ListSessions {
+        project: String,
+        reply: oneshot::Sender<String>,
+    },
 }
 
 /// Run the client listener. Accepts persistent bidirectional connections on
@@ -165,8 +187,68 @@ async fn handle_client_connection(
                     }
                 }
             }
-            _ => {
-                eprintln!("agent-dashd: unhandled client request: {req:?}");
+            ClientRequest::GetMessages {
+                session_id,
+                format,
+                limit,
+            } => {
+                let (reply_tx, reply_rx) = oneshot::channel();
+                let _ = tx
+                    .send(ClientMessage::GetMessages {
+                        session_id,
+                        format: format.unwrap_or_else(|| "structured".into()),
+                        limit: limit.unwrap_or(50),
+                        reply: reply_tx,
+                    })
+                    .await;
+                if let Ok(json) = reply_rx.await {
+                    let _ = writer.write_all(json.as_bytes()).await;
+                }
+            }
+            ClientRequest::WatchSession {
+                session_id,
+                format,
+            } => {
+                let (sub_tx, mut sub_rx) = mpsc::channel::<String>(64);
+                let _ = tx
+                    .send(ClientMessage::WatchSession {
+                        session_id: session_id.clone(),
+                        format: format.unwrap_or_else(|| "structured".into()),
+                        tx: sub_tx,
+                    })
+                    .await;
+
+                // Stream messages until disconnect.
+                while let Some(msg) = sub_rx.recv().await {
+                    if writer.write_all(msg.as_bytes()).await.is_err() {
+                        break;
+                    }
+                }
+
+                // Clean up the watch on disconnect.
+                let _ = tx
+                    .send(ClientMessage::UnwatchSession {
+                        session_id,
+                    })
+                    .await;
+                return;
+            }
+            ClientRequest::UnwatchSession { session_id } => {
+                let _ = tx
+                    .send(ClientMessage::UnwatchSession { session_id })
+                    .await;
+            }
+            ClientRequest::ListSessions { project } => {
+                let (reply_tx, reply_rx) = oneshot::channel();
+                let _ = tx
+                    .send(ClientMessage::ListSessions {
+                        project,
+                        reply: reply_tx,
+                    })
+                    .await;
+                if let Ok(json) = reply_rx.await {
+                    let _ = writer.write_all(json.as_bytes()).await;
+                }
             }
         }
     }
