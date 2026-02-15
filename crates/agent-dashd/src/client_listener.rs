@@ -165,6 +165,9 @@ async fn handle_client_connection(
                     }
                 }
             }
+            _ => {
+                eprintln!("agent-dashd: unhandled client request: {req:?}");
+            }
         }
     }
 }

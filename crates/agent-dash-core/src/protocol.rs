@@ -56,6 +56,28 @@ pub enum ClientRequest {
         tool: String,
         detail: String,
     },
+    #[serde(rename = "get_messages")]
+    GetMessages {
+        session_id: String,
+        #[serde(default)]
+        format: Option<String>,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+    #[serde(rename = "watch_session")]
+    WatchSession {
+        session_id: String,
+        #[serde(default)]
+        format: Option<String>,
+    },
+    #[serde(rename = "unwatch_session")]
+    UnwatchSession {
+        session_id: String,
+    },
+    #[serde(rename = "list_sessions")]
+    ListSessions {
+        project: String,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -79,6 +101,21 @@ pub enum ServerEvent {
         request_id: String,
         resolved_by: String,
     },
+    #[serde(rename = "messages")]
+    Messages {
+        session_id: String,
+        messages: Vec<ChatMessage>,
+    },
+    #[serde(rename = "message")]
+    Message {
+        session_id: String,
+        message: ChatMessage,
+    },
+    #[serde(rename = "session_list")]
+    SessionList {
+        project: String,
+        sessions: Vec<SessionListEntry>,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -89,6 +126,50 @@ pub enum ServerEvent {
 pub struct HookPermissionDecision {
     pub request_id: String,
     pub decision: String,
+}
+
+// ---------------------------------------------------------------------------
+// Chat message types (for message API)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatMessage {
+    pub role: String,
+    pub content: ChatContent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ChatContent {
+    Structured(Vec<ContentBlock>),
+    Rendered(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ContentBlock {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "tool_use")]
+    ToolUse {
+        name: String,
+        detail: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        input: Option<serde_json::Value>,
+    },
+    #[serde(rename = "tool_result")]
+    ToolResult {
+        name: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        output: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionListEntry {
+    pub session_id: String,
+    pub main: bool,
+    pub modified: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -256,5 +337,106 @@ mod tests {
         let json = "  {\"method\":\"subscribe\"}  \n";
         let req: ClientRequest = decode_line(json).unwrap();
         assert!(matches!(req, ClientRequest::Subscribe));
+    }
+
+    // -- New message/session request types --
+
+    #[test]
+    fn deserialize_get_messages() {
+        let json = r#"{"method":"get_messages","session_id":"s1","format":"html","limit":20}"#;
+        let req: ClientRequest = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequest::GetMessages { session_id, format, limit } => {
+                assert_eq!(session_id, "s1");
+                assert_eq!(format.as_deref(), Some("html"));
+                assert_eq!(limit, Some(20));
+            }
+            _ => panic!("expected GetMessages"),
+        }
+    }
+
+    #[test]
+    fn deserialize_get_messages_defaults() {
+        let json = r#"{"method":"get_messages","session_id":"s1"}"#;
+        let req: ClientRequest = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequest::GetMessages { format, limit, .. } => {
+                assert!(format.is_none());
+                assert!(limit.is_none());
+            }
+            _ => panic!("expected GetMessages"),
+        }
+    }
+
+    #[test]
+    fn deserialize_watch_session() {
+        let json = r#"{"method":"watch_session","session_id":"s1","format":"markdown"}"#;
+        let req: ClientRequest = serde_json::from_str(json).unwrap();
+        assert!(matches!(req, ClientRequest::WatchSession { .. }));
+    }
+
+    #[test]
+    fn deserialize_unwatch_session() {
+        let json = r#"{"method":"unwatch_session","session_id":"s1"}"#;
+        let req: ClientRequest = serde_json::from_str(json).unwrap();
+        assert!(matches!(req, ClientRequest::UnwatchSession { .. }));
+    }
+
+    #[test]
+    fn deserialize_list_sessions() {
+        let json = r#"{"method":"list_sessions","project":"traider"}"#;
+        let req: ClientRequest = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequest::ListSessions { project } => assert_eq!(project, "traider"),
+            _ => panic!("expected ListSessions"),
+        }
+    }
+
+    // -- New message/session server events --
+
+    #[test]
+    fn serialize_messages_event() {
+        let msg = ChatMessage {
+            role: "assistant".into(),
+            content: ChatContent::Structured(vec![
+                ContentBlock::Text { text: "hello".into() },
+            ]),
+        };
+        let event = ServerEvent::Messages {
+            session_id: "s1".into(),
+            messages: vec![msg],
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"event\":\"messages\""));
+        assert!(json.contains("\"role\":\"assistant\""));
+    }
+
+    #[test]
+    fn serialize_message_event() {
+        let msg = ChatMessage {
+            role: "user".into(),
+            content: ChatContent::Rendered("hello".into()),
+        };
+        let event = ServerEvent::Message {
+            session_id: "s1".into(),
+            message: msg,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"event\":\"message\""));
+    }
+
+    #[test]
+    fn serialize_session_list() {
+        let entry = SessionListEntry {
+            session_id: "abc".into(),
+            main: true,
+            modified: 1000,
+        };
+        let event = ServerEvent::SessionList {
+            project: "traider".into(),
+            sessions: vec![entry],
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"main\":true"));
     }
 }
