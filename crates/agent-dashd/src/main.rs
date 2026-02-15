@@ -3,7 +3,9 @@ use agent_dash_core::protocol::{self, HookEvent, HookPermissionDecision, ServerE
 use agent_dash_core::session::DashState;
 use agent_dashd::client_listener::{self, ClientMessage};
 use agent_dashd::hook_listener;
+use agent_dashd::messages;
 use agent_dashd::scanner;
+use agent_dashd::watcher;
 use agent_dashd::state::DaemonState;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -37,6 +39,12 @@ async fn main() {
     let mut subscribers: Vec<mpsc::Sender<String>> = Vec::new();
     let mut permission_waiters: HashMap<String, oneshot::Sender<HookPermissionDecision>> =
         HashMap::new();
+    let (watch_tx, mut watch_rx) = mpsc::channel::<watcher::FileChanged>(256);
+    let mut session_watcher = watcher::SessionWatcher::new(watch_tx)
+        .expect("failed to create file watcher");
+    let mut message_subscribers: HashMap<String, Vec<(String, mpsc::Sender<String>)>> =
+        HashMap::new();
+
     let mut scan_interval = tokio::time::interval(Duration::from_secs(5));
     let mut write_interval = tokio::time::interval(Duration::from_millis(500));
     let mut state_dirty = false;
@@ -169,6 +177,126 @@ async fn main() {
                         state_dirty = true;
                         broadcast_state(&mut subscribers, &state);
                     }
+                    ClientMessage::GetMessages {
+                        session_id,
+                        format,
+                        limit,
+                        reply,
+                    } => {
+                        let response = if let Some(session) = state.sessions.get(&session_id) {
+                            if let Some(ref jsonl) = session.jsonl_path {
+                                let path = std::path::PathBuf::from(jsonl);
+                                let msgs = messages::read_messages(&path, limit, &format);
+                                let event = ServerEvent::Messages {
+                                    session_id,
+                                    messages: msgs,
+                                };
+                                protocol::encode_line(&event).unwrap_or_default()
+                            } else {
+                                protocol::encode_line(&ServerEvent::Messages {
+                                    session_id,
+                                    messages: vec![],
+                                })
+                                .unwrap_or_default()
+                            }
+                        } else {
+                            protocol::encode_line(&ServerEvent::Messages {
+                                session_id,
+                                messages: vec![],
+                            })
+                            .unwrap_or_default()
+                        };
+                        let _ = reply.send(response);
+                    }
+                    ClientMessage::WatchSession {
+                        session_id,
+                        format,
+                        tx,
+                    } => {
+                        if let Some(session) = state.sessions.get_mut(&session_id) {
+                            if let Some(ref jsonl) = session.jsonl_path {
+                                let path = std::path::PathBuf::from(jsonl);
+                                let file_len = std::fs::metadata(&path)
+                                    .map(|m| m.len())
+                                    .unwrap_or(0);
+                                session.watch_offset = Some(file_len);
+                                let _ = session_watcher.watch(&session_id, &path);
+                            }
+                        }
+                        message_subscribers
+                            .entry(session_id)
+                            .or_default()
+                            .push((format, tx));
+                    }
+                    ClientMessage::UnwatchSession { session_id } => {
+                        message_subscribers.remove(&session_id);
+                        session_watcher.unwatch(&session_id);
+                        if let Some(session) = state.sessions.get_mut(&session_id) {
+                            session.watch_offset = None;
+                        }
+                    }
+                    ClientMessage::ListSessions { project, reply } => {
+                        let projects_dir = paths::claude_projects_dir();
+                        // Find the slug for this project by looking at existing sessions.
+                        let slug = state
+                            .sessions
+                            .values()
+                            .find(|s| s.project_name == project)
+                            .and_then(|s| s.cwd.as_ref())
+                            .map(|cwd| paths::cwd_to_project_slug(std::path::Path::new(cwd)))
+                            .unwrap_or_else(|| project.replace('/', "-").replace('\\', "-"));
+                        let project_dir = projects_dir.join(&slug);
+
+                        let mut entries = Vec::new();
+                        if let Ok(dir_entries) = std::fs::read_dir(&project_dir) {
+                            let main_jsonl: Option<String> = state
+                                .sessions
+                                .values()
+                                .find(|s| s.project_name == project)
+                                .and_then(|s| s.jsonl_path.clone());
+
+                            for entry in dir_entries.flatten() {
+                                let path = entry.path();
+                                if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                                    continue;
+                                }
+                                let modified = entry
+                                    .metadata()
+                                    .ok()
+                                    .and_then(|m| m.modified().ok())
+                                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                                    .map(|d| d.as_secs())
+                                    .unwrap_or(0);
+
+                                let session_id = scanner::parse_jsonl_status(&path)
+                                    .map(|s| s.session_id)
+                                    .unwrap_or_else(|| {
+                                        path.file_stem()
+                                            .unwrap_or_default()
+                                            .to_string_lossy()
+                                            .to_string()
+                                    });
+
+                                let is_main = main_jsonl
+                                    .as_ref()
+                                    .is_some_and(|p| *p == path.to_string_lossy().to_string());
+
+                                entries.push(protocol::SessionListEntry {
+                                    session_id,
+                                    main: is_main,
+                                    modified,
+                                });
+                            }
+                        }
+
+                        entries.sort_by(|a, b| b.modified.cmp(&a.modified));
+
+                        let event = ServerEvent::SessionList {
+                            project,
+                            sessions: entries,
+                        };
+                        let _ = reply.send(protocol::encode_line(&event).unwrap_or_default());
+                    }
                 }
             }
 
@@ -250,6 +378,47 @@ async fn main() {
 
                 state_dirty = true;
                 broadcast_state(&mut subscribers, &state);
+            }
+
+            // --- File change events (for watch_session subscribers) ---
+            Some(changed) = watch_rx.recv() => {
+                if let Some(subs) = message_subscribers.get(&changed.session_id) {
+                    if !subs.is_empty() {
+                        let offset = state.sessions.get(&changed.session_id)
+                            .and_then(|s| s.watch_offset)
+                            .unwrap_or(0);
+
+                        let mut by_format: HashMap<&str, Vec<&mpsc::Sender<String>>> = HashMap::new();
+                        for (fmt, tx) in subs {
+                            by_format.entry(fmt.as_str()).or_default().push(tx);
+                        }
+
+                        for (fmt, senders) in &by_format {
+                            let (msgs, new_offset) = messages::read_new_messages(
+                                &changed.path, offset, fmt,
+                            );
+                            if let Some(session) = state.sessions.get_mut(&changed.session_id) {
+                                session.watch_offset = Some(new_offset);
+                            }
+                            for msg in &msgs {
+                                let event = ServerEvent::Message {
+                                    session_id: changed.session_id.clone(),
+                                    message: msg.clone(),
+                                };
+                                if let Ok(line) = protocol::encode_line(&event) {
+                                    for tx in senders {
+                                        let _ = tx.try_send(line.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Clean up disconnected subscribers.
+                for subs in message_subscribers.values_mut() {
+                    subs.retain(|(_, tx)| !tx.is_closed());
+                }
+                message_subscribers.retain(|_, subs| !subs.is_empty());
             }
 
             // --- Periodic state.json write ---

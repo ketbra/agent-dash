@@ -19,6 +19,7 @@ pub struct InternalSession {
     pub last_status_change: u64,
     pub has_pending_question: bool,
     pub question_text: Option<String>,
+    pub watch_offset: Option<u64>,
 }
 
 /// A pending permission request.
@@ -68,6 +69,7 @@ impl DaemonState {
                 last_status_change: now_epoch_secs(),
                 has_pending_question: false,
                 question_text: None,
+                watch_offset: None,
             });
     }
 
