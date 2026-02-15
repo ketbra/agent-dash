@@ -4,8 +4,53 @@ use agent_dash_core::protocol::{ClientRequest, ServerEvent, encode_line};
 use crossterm::terminal;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use std::io::{BufRead, BufReader, Read, Write};
+use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+
+/// Ensure the daemon is running. If not, fork it as a background process.
+/// Returns true if the daemon is available, false if couldn't start.
+fn ensure_daemon() -> bool {
+    let sock = paths::client_socket_name();
+
+    // Try connecting — if it works, daemon is already running.
+    if UnixStream::connect(&sock).is_ok() {
+        return true;
+    }
+
+    eprintln!("Starting agent-dash daemon...");
+
+    // Get path to our own binary.
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+
+    // Fork the daemon as a background process.
+    let child = std::process::Command::new(&exe)
+        .arg("daemon")
+        .arg("start")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn();
+
+    if child.is_err() {
+        eprintln!("Failed to start daemon");
+        return false;
+    }
+
+    // Wait up to 2 seconds for the socket to appear.
+    for _ in 0..20 {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if UnixStream::connect(&sock).is_ok() {
+            return true;
+        }
+    }
+
+    eprintln!("Daemon did not start within 2 seconds");
+    false
+}
 
 /// Run an agent inside a PTY wrapper.
 /// Blocks until the child process exits. Returns the exit code.
@@ -17,6 +62,14 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
             profile.display_name, profile.install_hint
         );
         return 1;
+    }
+
+    // Ensure daemon is running (auto-start if needed).
+    ensure_daemon();
+
+    // Check if hooks are installed.
+    if !crate::setup::hooks_installed() {
+        eprintln!("agent-dash hooks not installed. Run `agent-dash setup hooks` to install.");
     }
 
     // Get current terminal size.
@@ -218,13 +271,13 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
 }
 
 /// Try to connect to the daemon. Returns None if not running.
-fn try_connect_daemon() -> Option<std::os::unix::net::UnixStream> {
-    std::os::unix::net::UnixStream::connect(paths::client_socket_name()).ok()
+fn try_connect_daemon() -> Option<UnixStream> {
+    UnixStream::connect(paths::client_socket_name()).ok()
 }
 
 /// Send a request to the daemon connection.
 fn send_to_daemon(
-    conn: &std::os::unix::net::UnixStream,
+    conn: &UnixStream,
     req: &ClientRequest,
 ) -> Result<(), std::io::Error> {
     let line =
