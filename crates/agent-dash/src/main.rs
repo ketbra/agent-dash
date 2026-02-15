@@ -1,3 +1,5 @@
+mod agents;
+
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
