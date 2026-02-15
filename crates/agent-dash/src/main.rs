@@ -8,6 +8,7 @@ mod messages;
 mod scanner;
 mod state;
 mod watcher;
+mod wrapper;
 
 use clap::{Parser, Subcommand};
 
@@ -122,68 +123,44 @@ async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        None | Some(Commands::Status) => {
-            println!("status: not yet implemented");
+        Some(Commands::Run { agent, args }) => {
+            let profile = agents::lookup(&agent).unwrap_or_else(|| {
+                eprintln!("Unknown agent: {agent}");
+                eprintln!("Supported agents: claude");
+                std::process::exit(1);
+            });
+            let exit_code = wrapper::run(profile, &args);
+            std::process::exit(exit_code);
         }
-        Some(cmd) => match cmd {
-            Commands::Run { agent, args } => {
-                println!("run: not yet implemented (agent={agent}, args={args:?})");
+        Some(Commands::Daemon { action }) => match action {
+            DaemonAction::Start => {
+                daemon::run().await;
             }
-            Commands::Daemon { action } => match action {
-                DaemonAction::Start => {
-                    daemon::run().await;
-                }
-                DaemonAction::Stop => {
-                    println!("daemon stop: not yet implemented");
-                }
-                DaemonAction::Status => {
-                    println!("daemon status: not yet implemented");
-                }
-            },
-            Commands::Status => unreachable!(),
-            Commands::Messages {
-                session_id,
-                format,
-                limit,
-            } => {
-                println!(
-                    "messages: not yet implemented (session={session_id}, format={format}, limit={limit:?})"
-                );
-            }
-            Commands::Sessions { project } => {
-                println!("sessions: not yet implemented (project={project})");
-            }
-            Commands::Watch {
-                session_id,
-                format,
-            } => {
-                println!(
-                    "watch: not yet implemented (session={session_id}, format={format})"
-                );
-            }
-            Commands::Inject { session_id, text } => {
-                println!("inject: not yet implemented (session={session_id}, text={text})");
-            }
-            Commands::Hook { event_type } => {
-                hook_cmd::run(&event_type);
-            }
-            Commands::Setup { target } => {
-                println!("setup: not yet implemented (target={target:?})");
-            }
-            Commands::WatchEvents => {
-                println!("watch-events: not yet implemented");
-            }
-            Commands::Approve { request_id } => {
-                println!("approve: not yet implemented (request_id={request_id})");
-            }
-            Commands::ApproveSimilar { request_id } => {
-                println!(
-                    "approve-similar: not yet implemented (request_id={request_id})"
-                );
-            }
-            Commands::Deny { request_id } => {
-                println!("deny: not yet implemented (request_id={request_id})");
-            }
+            DaemonAction::Stop => println!("daemon stop: not yet implemented"),
+            DaemonAction::Status => println!("daemon status: not yet implemented"),
         },
+        Some(Commands::Status) | None => cli::cmd_status(),
+        Some(Commands::Messages { session_id, format, limit }) => {
+            cli::cmd_messages(&session_id, &format, limit.unwrap_or(20));
+        }
+        Some(Commands::Sessions { project }) => cli::cmd_sessions(&project),
+        Some(Commands::Watch { session_id, format }) => {
+            cli::cmd_watch_messages(&session_id, &format);
+        }
+        Some(Commands::WatchEvents) => cli::cmd_watch(),
+        Some(Commands::Inject { session_id, text }) => {
+            cli::cmd_inject(&session_id, &text);
+        }
+        Some(Commands::Hook { event_type }) => hook_cmd::run(&event_type),
+        Some(Commands::Setup { target }) => println!("setup: not yet implemented"),
+        Some(Commands::Approve { request_id }) => {
+            cli::cmd_permission_response(&request_id, "allow");
+        }
+        Some(Commands::ApproveSimilar { request_id }) => {
+            cli::cmd_permission_response(&request_id, "allow_similar");
+        }
+        Some(Commands::Deny { request_id }) => {
+            cli::cmd_permission_response(&request_id, "deny");
+        }
     }
 }
