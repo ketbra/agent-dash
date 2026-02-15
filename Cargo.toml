@@ -2,9 +2,6 @@
 members = [
     "crates/agent-dash",
     "crates/agent-dash-core",
-    "crates/agent-dashd",
-    "crates/agent-dash-hook",
-    "crates/agentctl",
 ]
 resolver = "3"
 
