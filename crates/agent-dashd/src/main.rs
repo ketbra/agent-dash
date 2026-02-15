@@ -176,15 +176,26 @@ async fn main() {
             _ = scan_interval.tick() => {
                 let processes = scanner::scan_claude_processes();
                 let projects_dir = paths::claude_projects_dir();
-                let mut seen_pids: HashSet<u32> = HashSet::new();
 
+                // Group processes by project slug to deduplicate subagents
+                // sharing the same CWD.
+                let mut slug_groups: HashMap<String, Vec<(u32, &scanner::ClaudeProcess)>> =
+                    HashMap::new();
                 for (pid, proc_info) in &processes {
-                    seen_pids.insert(*pid);
                     let slug = paths::cwd_to_project_slug(&proc_info.cwd);
+                    slug_groups.entry(slug).or_default().push((*pid, proc_info));
+                }
+
+                let mut active_session_ids: HashSet<String> = HashSet::new();
+
+                for (slug, group) in &mut slug_groups {
+                    // Sort by PID for a stable representative.
+                    group.sort_by_key(|(pid, _)| *pid);
+                    let (representative_pid, proc_info) = group[0];
                     let project_name = paths::project_name_from_cwd(&proc_info.cwd);
 
-                    // Look for JSONL file in the Claude projects directory.
-                    let project_dir = projects_dir.join(&slug);
+                    // Look up JSONL once per slug, not per PID.
+                    let project_dir = projects_dir.join(slug.as_str());
                     let jsonl_path = scanner::find_latest_jsonl(&project_dir);
 
                     let (session_id, branch, has_pending_question, question_text) =
@@ -197,16 +208,17 @@ async fn main() {
                                     status.question_text,
                                 )
                             } else {
-                                // No parseable session info; use PID as session ID.
-                                (format!("pid-{pid}"), String::new(), false, None)
+                                // No parseable session info; use slug as fallback ID.
+                                (format!("scan-{slug}"), String::new(), false, None)
                             }
                         } else {
-                            (format!("pid-{pid}"), String::new(), false, None)
+                            (format!("scan-{slug}"), String::new(), false, None)
                         };
 
+                    active_session_ids.insert(session_id.clone());
                     state.ensure_session(&session_id);
                     if let Some(session) = state.sessions.get_mut(&session_id) {
-                        session.pid = Some(*pid);
+                        session.pid = Some(representative_pid);
                         session.cwd = Some(proc_info.cwd.to_string_lossy().to_string());
                         session.project_name = project_name;
                         session.branch = branch;
@@ -219,13 +231,21 @@ async fn main() {
                     }
                 }
 
-                // Prune sessions whose processes are gone.
-                // Keep hook-only sessions (no PID) since they came from hooks.
-                state.sessions.retain(|_id, session| {
-                    match session.pid {
-                        Some(pid) => seen_pids.contains(&pid),
-                        None => true, // hook-only session, keep it
+                // Prune sessions no longer active.
+                // Keep hook-only sessions (pid=None) if updated within last 5 minutes.
+                let now_secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                state.sessions.retain(|id, session| {
+                    if active_session_ids.contains(id) {
+                        return true;
                     }
+                    // Hook-only sessions have no PID; keep if recently active.
+                    if session.pid.is_none() {
+                        return now_secs.saturating_sub(session.last_status_change) < 300;
+                    }
+                    false
                 });
 
                 state_dirty = true;
