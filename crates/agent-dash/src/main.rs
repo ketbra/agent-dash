@@ -6,6 +6,7 @@ mod hook_cmd;
 mod hook_listener;
 mod messages;
 mod scanner;
+mod setup;
 mod state;
 mod watcher;
 mod wrapper;
@@ -152,7 +153,24 @@ async fn main() {
             cli::cmd_inject(&session_id, &text);
         }
         Some(Commands::Hook { event_type }) => hook_cmd::run(&event_type),
-        Some(Commands::Setup { target }) => println!("setup: not yet implemented"),
+        Some(Commands::Setup { target }) => {
+            let target = target.as_deref().unwrap_or("all");
+            match target {
+                "hooks" | "all" => match setup::install_hooks(false) {
+                    Ok(true) => println!("Hooks installed successfully."),
+                    Ok(false) => println!("Hooks already up to date."),
+                    Err(e) => {
+                        eprintln!("Failed to install hooks: {e}");
+                        std::process::exit(1);
+                    }
+                },
+                _ => {
+                    eprintln!("Unknown setup target: {target}");
+                    eprintln!("Available: hooks, all");
+                    std::process::exit(1);
+                }
+            }
+        }
         Some(Commands::Approve { request_id }) => {
             cli::cmd_permission_response(&request_id, "allow");
         }
