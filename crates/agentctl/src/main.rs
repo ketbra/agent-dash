@@ -24,8 +24,23 @@ fn main() {
             let id = args.get(2).expect("usage: agentctl deny <request_id>");
             cmd_permission_response(id, "deny");
         }
+        "messages" => {
+            let session_id = args.get(2).expect("usage: agentctl messages <session_id> [format] [limit]");
+            let format = args.get(3).map(|s| s.as_str()).unwrap_or("structured");
+            let limit: usize = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(20);
+            cmd_messages(session_id, format, limit);
+        }
+        "sessions" => {
+            let project = args.get(2).expect("usage: agentctl sessions <project_name>");
+            cmd_sessions(project);
+        }
+        "watch-messages" => {
+            let session_id = args.get(2).expect("usage: agentctl watch-messages <session_id> [format]");
+            let format = args.get(3).map(|s| s.as_str()).unwrap_or("structured");
+            cmd_watch_messages(session_id, format);
+        }
         _ => {
-            eprintln!("usage: agentctl <status|list|watch|approve|approve-similar|deny>");
+            eprintln!("usage: agentctl <status|list|watch|messages|sessions|watch-messages|approve|approve-similar|deny>");
             std::process::exit(1);
         }
     }
@@ -117,4 +132,107 @@ fn cmd_permission_response(request_id: &str, decision: &str) {
 /// Truncate a string to at most `max` bytes, respecting UTF-8 boundaries.
 fn truncate(s: &str, max: usize) -> &str {
     s.get(..max).unwrap_or(s)
+}
+
+/// Fetch and print last N messages for a session.
+fn cmd_messages(session_id: &str, format: &str, limit: usize) {
+    let mut conn = connect();
+    let req = ClientRequest::GetMessages {
+        session_id: session_id.to_string(),
+        format: Some(format.to_string()),
+        limit: Some(limit),
+    };
+    send_request(&mut conn, &req);
+
+    let reader = io::BufReader::new(&conn);
+    for line in reader.lines() {
+        let Ok(line) = line else { break };
+        let Ok(event) = serde_json::from_str::<ServerEvent>(&line) else {
+            continue;
+        };
+        if let ServerEvent::Messages { messages, .. } = event {
+            if messages.is_empty() {
+                println!("No messages found.");
+                return;
+            }
+            for msg in &messages {
+                println!("--- {} ---", msg.role);
+                match &msg.content {
+                    agent_dash_core::protocol::ChatContent::Structured(blocks) => {
+                        for block in blocks {
+                            match block {
+                                agent_dash_core::protocol::ContentBlock::Text { text } => {
+                                    println!("{text}");
+                                }
+                                agent_dash_core::protocol::ContentBlock::ToolUse {
+                                    name, detail, ..
+                                } => {
+                                    println!("> {name}: {detail}");
+                                }
+                                agent_dash_core::protocol::ContentBlock::ToolResult {
+                                    output, ..
+                                } => {
+                                    if let Some(out) = output {
+                                        let display = truncate(out, 200);
+                                        println!("> result: {display}");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    agent_dash_core::protocol::ChatContent::Rendered(text) => {
+                        println!("{text}");
+                    }
+                }
+            }
+            return;
+        }
+    }
+}
+
+/// List all sessions for a project.
+fn cmd_sessions(project: &str) {
+    let mut conn = connect();
+    let req = ClientRequest::ListSessions {
+        project: project.to_string(),
+    };
+    send_request(&mut conn, &req);
+
+    let reader = io::BufReader::new(&conn);
+    for line in reader.lines() {
+        let Ok(line) = line else { break };
+        let Ok(event) = serde_json::from_str::<ServerEvent>(&line) else {
+            continue;
+        };
+        if let ServerEvent::SessionList {
+            project, sessions, ..
+        } = event
+        {
+            if sessions.is_empty() {
+                println!("No sessions found for project '{project}'.");
+                return;
+            }
+            for s in &sessions {
+                let main_marker = if s.main { " (main)" } else { "" };
+                println!("{}{main_marker}", truncate(&s.session_id, 8));
+            }
+            return;
+        }
+    }
+}
+
+/// Subscribe to live messages for a session.
+fn cmd_watch_messages(session_id: &str, format: &str) {
+    let mut conn = connect();
+    let req = ClientRequest::WatchSession {
+        session_id: session_id.to_string(),
+        format: Some(format.to_string()),
+    };
+    send_request(&mut conn, &req);
+
+    let reader = io::BufReader::new(&conn);
+    for line in reader.lines() {
+        let Ok(line) = line else { break };
+        println!("{line}");
+    }
 }
