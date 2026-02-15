@@ -1,6 +1,8 @@
 mod agents;
+mod cli;
 mod client_listener;
 mod daemon;
+mod hook_cmd;
 mod hook_listener;
 mod messages;
 mod scanner;
@@ -163,7 +165,7 @@ async fn main() {
                 println!("inject: not yet implemented (session={session_id}, text={text})");
             }
             Commands::Hook { event_type } => {
-                println!("hook: not yet implemented (event_type={event_type})");
+                hook_cmd::run(&event_type);
             }
             Commands::Setup { target } => {
                 println!("setup: not yet implemented (target={target:?})");
