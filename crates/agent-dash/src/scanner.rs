@@ -49,15 +49,29 @@ pub fn find_latest_jsonl(dir: &Path) -> Option<PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return None;
     };
-    entries
+    let mut jsonls: Vec<_> = entries
         .filter_map(|e| e.ok())
         .filter(|e| {
             e.path()
                 .extension()
                 .is_some_and(|ext| ext == "jsonl")
         })
-        .max_by_key(|e| e.metadata().ok().and_then(|m| m.modified().ok()))
-        .map(|e| e.path())
+        .collect();
+    // Sort newest first.
+    jsonls.sort_by(|a, b| {
+        let ma = a.metadata().ok().and_then(|m| m.modified().ok());
+        let mb = b.metadata().ok().and_then(|m| m.modified().ok());
+        mb.cmp(&ma)
+    });
+    // Return the first file that has a parseable session (actual
+    // conversation content, not just file-history-snapshot metadata).
+    for entry in &jsonls {
+        let path = entry.path();
+        if parse_jsonl_status(&path).is_some() {
+            return Some(path);
+        }
+    }
+    None
 }
 
 /// A parsed JSONL message (we only care about a few fields).
@@ -233,11 +247,27 @@ mod tests {
     fn find_latest_jsonl_picks_newest() {
         let dir = std::env::temp_dir().join("agent-dash-test-scanner-jsonl");
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("old.jsonl"), "{}").unwrap();
+        let valid = r#"{"type":"user","sessionId":"s1","message":{"content":"hi"}}"#;
+        std::fs::write(dir.join("old.jsonl"), format!("{valid}\n")).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(50));
-        std::fs::write(dir.join("new.jsonl"), "{}").unwrap();
+        std::fs::write(dir.join("new.jsonl"), format!("{valid}\n")).unwrap();
         let latest = find_latest_jsonl(&dir).unwrap();
         assert_eq!(latest.file_name().unwrap(), "new.jsonl");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn find_latest_jsonl_skips_metadata_only() {
+        let dir = std::env::temp_dir().join("agent-dash-test-scanner-skip-meta");
+        std::fs::create_dir_all(&dir).unwrap();
+        let valid = r#"{"type":"user","sessionId":"s1","message":{"content":"hi"}}"#;
+        let metadata = r#"{"type":"file-history-snapshot","messageId":"x","snapshot":{}}"#;
+        std::fs::write(dir.join("old.jsonl"), format!("{valid}\n")).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        // Newest file is metadata-only — should be skipped.
+        std::fs::write(dir.join("new.jsonl"), format!("{metadata}\n")).unwrap();
+        let latest = find_latest_jsonl(&dir).unwrap();
+        assert_eq!(latest.file_name().unwrap(), "old.jsonl");
         std::fs::remove_dir_all(&dir).ok();
     }
 

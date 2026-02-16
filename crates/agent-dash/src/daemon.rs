@@ -207,22 +207,13 @@ pub async fn run() {
                         limit,
                         reply,
                     } => {
-                        let response = if let Some(session) = state.sessions.get(&session_id) {
-                            if let Some(ref jsonl) = session.jsonl_path {
-                                let path = std::path::PathBuf::from(jsonl);
-                                let msgs = messages::read_messages(&path, limit, &format);
-                                let event = ServerEvent::Messages {
-                                    session_id,
-                                    messages: msgs,
-                                };
-                                protocol::encode_line(&event).unwrap_or_default()
-                            } else {
-                                protocol::encode_line(&ServerEvent::Messages {
-                                    session_id,
-                                    messages: vec![],
-                                })
-                                .unwrap_or_default()
-                            }
+                        let response = if let Some(path) = resolve_jsonl_path(&session_id, &state) {
+                            let msgs = messages::read_messages(&path, limit, &format);
+                            let event = ServerEvent::Messages {
+                                session_id,
+                                messages: msgs,
+                            };
+                            protocol::encode_line(&event).unwrap_or_default()
                         } else {
                             protocol::encode_line(&ServerEvent::Messages {
                                 session_id,
@@ -292,14 +283,13 @@ pub async fn run() {
                                     .map(|d| d.as_secs())
                                     .unwrap_or(0);
 
-                                let session_id = scanner::parse_jsonl_status(&path)
-                                    .map(|s| s.session_id)
-                                    .unwrap_or_else(|| {
-                                        path.file_stem()
-                                            .unwrap_or_default()
-                                            .to_string_lossy()
-                                            .to_string()
-                                    });
+                                // Skip JSONL files that have no parseable
+                                // conversation content (e.g. metadata-only
+                                // files with just file-history-snapshot).
+                                let Some(status) = scanner::parse_jsonl_status(&path) else {
+                                    continue;
+                                };
+                                let session_id = status.session_id;
 
                                 let is_main = main_jsonl
                                     .as_ref()
@@ -529,6 +519,57 @@ fn broadcast_to_subscribers<T: serde::Serialize>(
         return;
     };
     subscribers.retain(|tx| tx.try_send(line.clone()).is_ok());
+}
+
+/// Resolve a (possibly truncated) session ID to its JSONL path.
+///
+/// Tries in order:
+/// 1. Exact match in daemon state
+/// 2. Prefix match in daemon state
+/// 3. Prefix match on JSONL filenames in Claude's projects directory
+fn resolve_jsonl_path(session_id: &str, state: &DaemonState) -> Option<std::path::PathBuf> {
+    // 1. Exact match.
+    if let Some(session) = state.sessions.get(session_id) {
+        if let Some(ref p) = session.jsonl_path {
+            return Some(std::path::PathBuf::from(p));
+        }
+    }
+
+    // 2. Prefix match on daemon state keys.
+    let prefix_matches: Vec<_> = state
+        .sessions
+        .iter()
+        .filter(|(k, _)| k.starts_with(session_id))
+        .collect();
+    if prefix_matches.len() == 1 {
+        if let Some(ref p) = prefix_matches[0].1.jsonl_path {
+            return Some(std::path::PathBuf::from(p));
+        }
+    }
+
+    // 3. Search JSONL files in Claude's projects directory by filename prefix.
+    let projects_dir = paths::claude_projects_dir();
+    if let Ok(project_dirs) = std::fs::read_dir(&projects_dir) {
+        for project_entry in project_dirs.flatten() {
+            if !project_entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue;
+            }
+            if let Ok(files) = std::fs::read_dir(project_entry.path()) {
+                for file in files.flatten() {
+                    let path = file.path();
+                    if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                        continue;
+                    }
+                    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                    if stem.starts_with(session_id) {
+                        return Some(path);
+                    }
+                }
+            }
+        }
+    }
+
+    None
 }
 
 /// Atomically write state.json (write to .tmp then rename).
