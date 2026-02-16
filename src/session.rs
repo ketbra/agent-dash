@@ -82,6 +82,8 @@ pub struct DashSession {
     pub status: String,
     pub last_status_change: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub jsonl_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub input_reason: Option<DashInputReason>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_tool: Option<DashActiveTool>,
@@ -160,6 +162,7 @@ impl Session {
             branch: self.branch.clone(),
             status,
             last_status_change: self.last_status_change,
+            jsonl_path: Some(self.jsonl_path.to_string_lossy().to_string()),
             input_reason,
             active_tool: self.active_tool.as_ref().map(|(name, detail)| DashActiveTool {
                 icon: tool_icon(name).to_string(),

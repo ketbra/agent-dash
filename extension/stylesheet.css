@@ -44,9 +44,27 @@
     font-size: 10pt;
 }
 
+.agent-dash-button:hover {
+    background-color: rgba(100, 100, 100, 0.5);
+}
+
+.agent-dash-button:active {
+    background-color: rgba(40, 40, 40, 0.8);
+    padding: 5px 11px 3px 13px;
+}
+
 .agent-dash-allow {
     background-color: rgba(80, 200, 80, 0.3);
     color: #50c850;
+}
+
+.agent-dash-allow:hover {
+    background-color: rgba(80, 200, 80, 0.5);
+}
+
+.agent-dash-allow:active {
+    background-color: rgba(60, 150, 60, 0.6);
+    padding: 5px 11px 3px 13px;
 }
 
 .agent-dash-deny {
@@ -54,9 +72,27 @@
     color: #ff5050;
 }
 
+.agent-dash-deny:hover {
+    background-color: rgba(255, 80, 80, 0.5);
+}
+
+.agent-dash-deny:active {
+    background-color: rgba(200, 60, 60, 0.6);
+    padding: 5px 11px 3px 13px;
+}
+
 .agent-dash-similar {
     background-color: rgba(255, 200, 50, 0.3);
     color: #ffc832;
+}
+
+.agent-dash-similar:hover {
+    background-color: rgba(255, 200, 50, 0.5);
+}
+
+.agent-dash-similar:active {
+    background-color: rgba(200, 150, 30, 0.6);
+    padding: 5px 11px 3px 13px;
 }
 
 .agent-dash-sort-toggle {
@@ -92,4 +128,22 @@
     padding: 4px 8px;
     border-radius: 4px;
     margin-left: 4px;
+}
+
+/* Chat preview popup */
+.agent-dash-chat-popup {
+    background-color: rgba(30, 30, 30, 0.95);
+    border-radius: 6px;
+    padding: 12px;
+    border-left: 1px solid rgba(80, 80, 80, 0.6);
+}
+
+.agent-dash-chat-scroll {
+    padding: 0;
+}
+
+.agent-dash-chat-label {
+    color: #e0e0e0;
+    font-size: 10pt;
+    padding: 4px;
 }

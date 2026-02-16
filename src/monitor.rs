@@ -348,6 +348,18 @@ impl SessionMonitor {
             if seen_sessions.contains_key(sid) {
                 continue;
             }
+
+            // If a pid-based session vanished but the same PID now has a real
+            // session ID, the process didn't actually end — its ID just changed.
+            // Drop the stale pid-based entry silently instead of showing "ended".
+            if sid.starts_with("pid-") {
+                if let Ok(old_pid) = sid.strip_prefix("pid-").unwrap().parse::<i32>() {
+                    if seen_sessions.values().any(|s| s.pid == old_pid) {
+                        continue; // same process, new session ID — skip
+                    }
+                }
+            }
+
             if existing.status != SessionStatus::Ended {
                 let mut ended = existing.clone();
                 ended.status = SessionStatus::Ended;
