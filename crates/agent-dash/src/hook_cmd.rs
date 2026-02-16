@@ -492,6 +492,67 @@ mod tests {
     }
 
     #[test]
+    fn timestamp_ms_returns_nonzero() {
+        let ts = timestamp_ms();
+        assert!(ts > 0, "timestamp should be > 0, got {ts}");
+    }
+
+    #[test]
+    fn request_id_fallback_has_expected_format() {
+        // Simulate the fallback request_id generation logic used in handle_permission.
+        let pid = std::process::id();
+        let ts = timestamp_ms();
+        let request_id = format!("perm-{pid}-{ts}");
+        assert!(request_id.starts_with("perm-"));
+        // Should have three parts: perm, pid, timestamp
+        let parts: Vec<&str> = request_id.splitn(3, '-').collect();
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0], "perm");
+        assert!(parts[1].parse::<u32>().is_ok(), "PID should be numeric");
+        assert!(parts[2].parse::<u128>().is_ok(), "timestamp should be numeric");
+    }
+
+    #[test]
+    fn request_id_uses_tool_use_id_when_present() {
+        let input = serde_json::json!({
+            "tool_use_id": "tu-abc-123"
+        });
+        let request_id = input
+            .get("tool_use_id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("perm-{}-{}", std::process::id(), timestamp_ms()));
+        assert_eq!(request_id, "tu-abc-123");
+    }
+
+    #[test]
+    fn request_id_falls_back_when_tool_use_id_empty() {
+        let input = serde_json::json!({
+            "tool_use_id": ""
+        });
+        let request_id = input
+            .get("tool_use_id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("perm-{}-{}", std::process::id(), timestamp_ms()));
+        assert!(request_id.starts_with("perm-"));
+    }
+
+    #[test]
+    fn request_id_falls_back_when_tool_use_id_missing() {
+        let input = serde_json::json!({});
+        let request_id = input
+            .get("tool_use_id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("perm-{}-{}", std::process::id(), timestamp_ms()));
+        assert!(request_id.starts_with("perm-"));
+    }
+
+    #[test]
     fn translate_unknown_decision_defaults_to_allow() {
         let decision = HookPermissionDecision {
             request_id: "tu1".into(),

@@ -534,4 +534,76 @@ mod tests {
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"event\":\"error\""));
     }
+
+    // -- HookEnvelope round-trip (flattened serde) --
+
+    #[test]
+    fn hook_envelope_round_trip_without_wrapper_id() {
+        let envelope = HookEnvelope {
+            event: HookEvent::ToolStart {
+                session_id: "s1".into(),
+                tool: "Bash".into(),
+                detail: "ls".into(),
+                tool_use_id: "tu1".into(),
+            },
+            wrapper_id: None,
+        };
+        let json = serde_json::to_string(&envelope).unwrap();
+        // wrapper_id should be absent (skip_serializing_if = "Option::is_none")
+        assert!(!json.contains("wrapper_id"));
+        // Round-trip back
+        let decoded: HookEnvelope = serde_json::from_str(&json).unwrap();
+        assert!(decoded.wrapper_id.is_none());
+        match decoded.event {
+            HookEvent::ToolStart { session_id, tool, .. } => {
+                assert_eq!(session_id, "s1");
+                assert_eq!(tool, "Bash");
+            }
+            _ => panic!("expected ToolStart"),
+        }
+    }
+
+    #[test]
+    fn hook_envelope_round_trip_with_wrapper_id() {
+        let envelope = HookEnvelope {
+            event: HookEvent::Stop { session_id: "s1".into() },
+            wrapper_id: Some("wrap-123".into()),
+        };
+        let json = serde_json::to_string(&envelope).unwrap();
+        assert!(json.contains("\"wrapper_id\":\"wrap-123\""));
+        let decoded: HookEnvelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.wrapper_id.as_deref(), Some("wrap-123"));
+        assert!(matches!(decoded.event, HookEvent::Stop { .. }));
+    }
+
+    #[test]
+    fn hook_envelope_encode_decode_line() {
+        let envelope = HookEnvelope {
+            event: HookEvent::SessionStart {
+                session_id: "s1".into(),
+                cwd: Some("/home/user".into()),
+            },
+            wrapper_id: Some("wrap-456".into()),
+        };
+        let line = encode_line(&envelope).unwrap();
+        assert!(line.ends_with('\n'));
+        let decoded: HookEnvelope = decode_line(&line).unwrap();
+        assert_eq!(decoded.wrapper_id.as_deref(), Some("wrap-456"));
+        match decoded.event {
+            HookEvent::SessionStart { session_id, cwd } => {
+                assert_eq!(session_id, "s1");
+                assert_eq!(cwd.as_deref(), Some("/home/user"));
+            }
+            _ => panic!("expected SessionStart"),
+        }
+    }
+
+    #[test]
+    fn hook_envelope_deserialize_without_wrapper_id_field() {
+        // Simulate a JSON payload that omits wrapper_id entirely.
+        let json = r#"{"event":"stop","session_id":"s1"}"#;
+        let decoded: HookEnvelope = serde_json::from_str(json).unwrap();
+        assert!(decoded.wrapper_id.is_none());
+        assert!(matches!(decoded.event, HookEvent::Stop { .. }));
+    }
 }

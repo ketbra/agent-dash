@@ -596,6 +596,125 @@ fn resolve_jsonl_path(session_id: &str, state: &DaemonState) -> Option<std::path
     None
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::InternalSession;
+    use agent_dash_core::session::SessionStatus;
+
+    fn make_session(id: &str) -> InternalSession {
+        InternalSession {
+            session_id: id.to_string(),
+            pid: None,
+            cwd: None,
+            project_name: String::new(),
+            branch: String::new(),
+            status: SessionStatus::Idle,
+            active_tool: None,
+            jsonl_path: None,
+            last_status_change: 0,
+            has_pending_question: false,
+            question_text: None,
+            watch_offset: None,
+            wrapped: false,
+            agent: None,
+        }
+    }
+
+    // -- resolve_session_key --
+
+    #[test]
+    fn resolve_session_key_exact_match() {
+        let mut state = DaemonState::new();
+        state.sessions.insert("abc-123".into(), make_session("abc-123"));
+        assert_eq!(
+            resolve_session_key("abc-123", &state),
+            Some("abc-123".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_session_key_prefix_match() {
+        let mut state = DaemonState::new();
+        state
+            .sessions
+            .insert("abc-123-full-uuid".into(), make_session("abc-123-full-uuid"));
+        assert_eq!(
+            resolve_session_key("abc-123", &state),
+            Some("abc-123-full-uuid".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_session_key_ambiguous_prefix_returns_none() {
+        let mut state = DaemonState::new();
+        state.sessions.insert("abc-111".into(), make_session("abc-111"));
+        state.sessions.insert("abc-222".into(), make_session("abc-222"));
+        assert_eq!(resolve_session_key("abc", &state), None);
+    }
+
+    #[test]
+    fn resolve_session_key_no_match_returns_none() {
+        let state = DaemonState::new();
+        assert_eq!(resolve_session_key("xyz", &state), None);
+    }
+
+    #[test]
+    fn resolve_session_key_prefers_exact_over_prefix() {
+        let mut state = DaemonState::new();
+        // "abc" is an exact match key AND a prefix of "abc-longer"
+        state.sessions.insert("abc".into(), make_session("abc"));
+        state.sessions.insert("abc-longer".into(), make_session("abc-longer"));
+        assert_eq!(
+            resolve_session_key("abc", &state),
+            Some("abc".to_string())
+        );
+    }
+
+    // -- resolve_jsonl_path --
+
+    #[test]
+    fn resolve_jsonl_path_exact_match() {
+        let mut state = DaemonState::new();
+        let mut session = make_session("sess-1");
+        session.jsonl_path = Some("/tmp/test.jsonl".into());
+        state.sessions.insert("sess-1".into(), session);
+
+        let result = resolve_jsonl_path("sess-1", &state);
+        assert_eq!(result, Some(std::path::PathBuf::from("/tmp/test.jsonl")));
+    }
+
+    #[test]
+    fn resolve_jsonl_path_prefix_match() {
+        let mut state = DaemonState::new();
+        let mut session = make_session("sess-1-full-uuid");
+        session.jsonl_path = Some("/tmp/test.jsonl".into());
+        state.sessions.insert("sess-1-full-uuid".into(), session);
+
+        let result = resolve_jsonl_path("sess-1", &state);
+        assert_eq!(result, Some(std::path::PathBuf::from("/tmp/test.jsonl")));
+    }
+
+    #[test]
+    fn resolve_jsonl_path_no_jsonl_returns_none() {
+        let mut state = DaemonState::new();
+        let session = make_session("sess-1");
+        // jsonl_path is None
+        state.sessions.insert("sess-1".into(), session);
+
+        let result = resolve_jsonl_path("sess-1", &state);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn resolve_jsonl_path_no_match_returns_none() {
+        let state = DaemonState::new();
+        // No filesystem match for this ID either (no real files to find).
+        let result = resolve_jsonl_path("nonexistent-id-xyz-99999", &state);
+        assert_eq!(result, None);
+    }
+}
+
 /// Atomically write state.json (write to .tmp then rename).
 fn write_state_file(state: &DaemonState) {
     let dash = DashState {

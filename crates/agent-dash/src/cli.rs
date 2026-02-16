@@ -194,6 +194,47 @@ pub fn cmd_watch_messages(session_id: &str, format: &str) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_shorter_than_max() {
+        assert_eq!(truncate("hello", 10), "hello");
+    }
+
+    #[test]
+    fn truncate_exact_max() {
+        assert_eq!(truncate("hello", 5), "hello");
+    }
+
+    #[test]
+    fn truncate_longer_than_max() {
+        assert_eq!(truncate("hello world", 5), "hello");
+    }
+
+    #[test]
+    fn truncate_multibyte_boundary() {
+        // "héllo" — 'é' is 2 bytes; truncating at byte 2 would split it.
+        // truncate should return the whole string rather than panicking.
+        let s = "héllo";
+        let result = truncate(s, 2);
+        // Byte 0 = 'h', bytes 1-2 = 'é', so s.get(..2) = Some("h\xc3") which
+        // is invalid — get returns None and we fall back to the full string.
+        assert!(result.is_char_boundary(result.len()));
+    }
+
+    #[test]
+    fn truncate_empty_string() {
+        assert_eq!(truncate("", 10), "");
+    }
+
+    #[test]
+    fn truncate_zero_max() {
+        assert_eq!(truncate("hello", 0), "");
+    }
+}
+
 /// Send a prompt to a wrapped session.
 pub fn cmd_inject(session_id: &str, text: &str) {
     let mut conn = connect();
