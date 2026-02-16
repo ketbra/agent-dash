@@ -33,8 +33,8 @@ pub fn run(event_type: &str) {
     }
 
     match event_type.as_str() {
-        "tool-start" => handle_tool_start(&input, session_id),
-        "tool-end" => handle_tool_end(&input, session_id),
+        "pre-tool-use" | "tool-start" => handle_tool_start(&input, session_id),
+        "post-tool-use" | "tool-end" => handle_tool_end(&input, session_id),
         "stop" => handle_stop(session_id),
         "session-start" => handle_session_start(&input, session_id),
         "session-end" => handle_session_end(session_id),
@@ -116,16 +116,20 @@ fn handle_permission(input: &serde_json::Value, session_id: &str) {
         .get("tool_name")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let tool_use_id = input
+
+    // PermissionRequest hooks don't include tool_use_id; generate a
+    // unique request_id so the daemon can track it.
+    let request_id = input
         .get("tool_use_id")
         .and_then(|v| v.as_str())
-        .unwrap_or("");
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("perm-{}-{}", std::process::id(), timestamp_ms()));
 
     let detail = extract_tool_detail(input, tool_name);
 
-    // Build the permission request using tool_use_id as the request_id.
     let request = ClientRequest::PermissionRequest {
-        request_id: tool_use_id.to_string(),
+        request_id,
         session_id: session_id.to_string(),
         tool: tool_name.to_string(),
         detail,
@@ -182,6 +186,14 @@ fn handle_permission(input: &serde_json::Value, session_id: &str) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Millisecond timestamp for generating unique IDs.
+fn timestamp_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+}
 
 /// Extract a human-readable detail string from the tool input, based on tool name.
 fn extract_tool_detail(input: &serde_json::Value, tool_name: &str) -> String {

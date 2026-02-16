@@ -6,6 +6,7 @@ use std::path::PathBuf;
 const HOOK_ENTRIES: &[(&str, &str)] = &[
     ("PreToolUse", "agent-dash hook pre-tool-use"),
     ("PostToolUse", "agent-dash hook post-tool-use"),
+    ("PermissionRequest", "agent-dash hook permission"),
     ("Stop", "agent-dash hook stop"),
     ("SessionStart", "agent-dash hook session-start"),
     ("SessionEnd", "agent-dash hook session-end"),
@@ -303,6 +304,9 @@ mod tests {
                 ],
                 "PostToolUse": [
                     {"hooks": [{"type": "command", "command": "agent-dash hook post-tool-use"}]}
+                ],
+                "PermissionRequest": [
+                    {"hooks": [{"type": "command", "command": "agent-dash hook permission"}]}
                 ],
                 "Stop": [
                     {"hooks": [{"type": "command", "command": "agent-dash hook stop"}]}
