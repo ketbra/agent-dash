@@ -128,11 +128,18 @@ fn handle_permission(input: &serde_json::Value, session_id: &str) {
 
     let detail = extract_tool_detail(input, tool_name);
 
+    let suggestions: Vec<serde_json::Value> = input
+        .get("permission_suggestions")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
     let request = ClientRequest::PermissionRequest {
         request_id,
         session_id: session_id.to_string(),
         tool: tool_name.to_string(),
         detail,
+        suggestions,
     };
 
     let sock_path = paths::client_socket_name();
@@ -287,6 +294,7 @@ fn translate_permission_decision(decision: &HookPermissionDecision, tool_name: &
             .to_string()
         }
         "allow_similar" => {
+            // Legacy path for old agentctl clients that send "allow_similar".
             serde_json::json!({
                 "hookSpecificOutput": {
                     "hookEventName": "PermissionRequest",
@@ -301,17 +309,56 @@ fn translate_permission_decision(decision: &HookPermissionDecision, tool_name: &
             .to_string()
         }
         _ => {
-            // Default to allow.
-            serde_json::json!({
-                "hookSpecificOutput": {
-                    "hookEventName": "PermissionRequest",
-                    "decision": {
-                        "behavior": "allow"
+            // Default to allow. If a suggestion is attached, translate it to
+            // updatedPermissions so Claude Code applies the "always allow" rule.
+            let updated = decision
+                .suggestion
+                .as_ref()
+                .map(|s| build_updated_permissions(s))
+                .unwrap_or_default();
+
+            if updated.is_empty() {
+                serde_json::json!({
+                    "hookSpecificOutput": {
+                        "hookEventName": "PermissionRequest",
+                        "decision": {
+                            "behavior": "allow"
+                        }
                     }
-                }
-            })
-            .to_string()
+                })
+                .to_string()
+            } else {
+                serde_json::json!({
+                    "hookSpecificOutput": {
+                        "hookEventName": "PermissionRequest",
+                        "decision": {
+                            "behavior": "allow",
+                            "updatedPermissions": updated
+                        }
+                    }
+                })
+                .to_string()
+            }
         }
+    }
+}
+
+/// Map a permission suggestion object to Claude's `updatedPermissions` array.
+fn build_updated_permissions(suggestion: &serde_json::Value) -> Vec<serde_json::Value> {
+    let suggestion_type = suggestion
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    match suggestion_type {
+        "toolAlwaysAllow" => {
+            if let Some(tool) = suggestion.get("tool").and_then(|v| v.as_str()) {
+                vec![serde_json::json!({"tool": tool, "permission": "allow"})]
+            } else {
+                vec![]
+            }
+        }
+        _ => vec![], // Unknown suggestion type — fall back to plain allow.
     }
 }
 
@@ -444,6 +491,7 @@ mod tests {
         let decision = HookPermissionDecision {
             request_id: "tu1".into(),
             decision: "allow".into(),
+            suggestion: None,
         };
         let output = translate_permission_decision(&decision, "Bash");
         let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
@@ -454,6 +502,9 @@ mod tests {
         assert!(parsed["hookSpecificOutput"]["decision"]
             .get("message")
             .is_none());
+        assert!(parsed["hookSpecificOutput"]["decision"]
+            .get("updatedPermissions")
+            .is_none());
     }
 
     #[test]
@@ -461,6 +512,7 @@ mod tests {
         let decision = HookPermissionDecision {
             request_id: "tu1".into(),
             decision: "deny".into(),
+            suggestion: None,
         };
         let output = translate_permission_decision(&decision, "Bash");
         let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
@@ -479,6 +531,7 @@ mod tests {
         let decision = HookPermissionDecision {
             request_id: "tu1".into(),
             decision: "allow_similar".into(),
+            suggestion: None,
         };
         let output = translate_permission_decision(&decision, "Bash");
         let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
@@ -489,6 +542,43 @@ mod tests {
         let perms = &parsed["hookSpecificOutput"]["decision"]["updatedPermissions"];
         assert_eq!(perms[0]["tool"], "Bash");
         assert_eq!(perms[0]["permission"], "allow");
+    }
+
+    #[test]
+    fn translate_allow_with_tool_always_allow_suggestion() {
+        let decision = HookPermissionDecision {
+            request_id: "tu1".into(),
+            decision: "allow".into(),
+            suggestion: Some(serde_json::json!({"type": "toolAlwaysAllow", "tool": "Read"})),
+        };
+        let output = translate_permission_decision(&decision, "Bash");
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(
+            parsed["hookSpecificOutput"]["decision"]["behavior"],
+            "allow"
+        );
+        let perms = &parsed["hookSpecificOutput"]["decision"]["updatedPermissions"];
+        assert_eq!(perms[0]["tool"], "Read");
+        assert_eq!(perms[0]["permission"], "allow");
+    }
+
+    #[test]
+    fn translate_allow_with_unknown_suggestion_type() {
+        let decision = HookPermissionDecision {
+            request_id: "tu1".into(),
+            decision: "allow".into(),
+            suggestion: Some(serde_json::json!({"type": "someFutureThing"})),
+        };
+        let output = translate_permission_decision(&decision, "Bash");
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(
+            parsed["hookSpecificOutput"]["decision"]["behavior"],
+            "allow"
+        );
+        // Unknown type -> no updatedPermissions
+        assert!(parsed["hookSpecificOutput"]["decision"]
+            .get("updatedPermissions")
+            .is_none());
     }
 
     #[test]
@@ -557,6 +647,7 @@ mod tests {
         let decision = HookPermissionDecision {
             request_id: "tu1".into(),
             decision: "something_unknown".into(),
+            suggestion: None,
         };
         let output = translate_permission_decision(&decision, "Bash");
         let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
@@ -564,5 +655,28 @@ mod tests {
             parsed["hookSpecificOutput"]["decision"]["behavior"],
             "allow"
         );
+    }
+
+    #[test]
+    fn build_updated_permissions_tool_always_allow() {
+        let suggestion = serde_json::json!({"type": "toolAlwaysAllow", "tool": "Bash"});
+        let perms = build_updated_permissions(&suggestion);
+        assert_eq!(perms.len(), 1);
+        assert_eq!(perms[0]["tool"], "Bash");
+        assert_eq!(perms[0]["permission"], "allow");
+    }
+
+    #[test]
+    fn build_updated_permissions_unknown_type() {
+        let suggestion = serde_json::json!({"type": "unknownType"});
+        let perms = build_updated_permissions(&suggestion);
+        assert!(perms.is_empty());
+    }
+
+    #[test]
+    fn build_updated_permissions_missing_tool() {
+        let suggestion = serde_json::json!({"type": "toolAlwaysAllow"});
+        let perms = build_updated_permissions(&suggestion);
+        assert!(perms.is_empty());
     }
 }

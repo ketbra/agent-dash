@@ -31,6 +31,7 @@ pub struct PendingPermission {
     pub session_id: String,
     pub tool: String,
     pub detail: String,
+    pub suggestions: Vec<serde_json::Value>,
 }
 
 /// All daemon state.
@@ -145,6 +146,7 @@ impl DaemonState {
         request_id: &str,
         tool: &str,
         detail: &str,
+        suggestions: Vec<serde_json::Value>,
     ) {
         self.pending_permissions.insert(
             request_id.to_string(),
@@ -153,6 +155,7 @@ impl DaemonState {
                 session_id: session_id.to_string(),
                 tool: tool.to_string(),
                 detail: detail.to_string(),
+                suggestions,
             },
         );
         self.set_status(session_id, SessionStatus::NeedsInput);
@@ -311,7 +314,7 @@ mod tests {
     fn permission_request_lifecycle() {
         let mut state = DaemonState::new();
         state.ensure_session("s1");
-        state.add_permission_request("s1", "tu1", "Bash", "rm -rf /tmp");
+        state.add_permission_request("s1", "tu1", "Bash", "rm -rf /tmp", vec![]);
         assert!(state.pending_permissions.contains_key("tu1"));
         let session = state.sessions.get("s1").unwrap();
         assert_eq!(session.status, SessionStatus::NeedsInput);

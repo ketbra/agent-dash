@@ -22,6 +22,7 @@ pub enum ClientMessage {
         request_id: String,
         session_id: String,
         decision: String,
+        suggestion: Option<serde_json::Value>,
     },
     /// Hook binary sent a permission request (needs response back).
     PermissionRequest {
@@ -29,6 +30,7 @@ pub enum ClientMessage {
         session_id: String,
         tool: String,
         detail: String,
+        suggestions: Vec<serde_json::Value>,
         reply: oneshot::Sender<HookPermissionDecision>,
     },
     /// Client requests last N messages from a session.
@@ -169,12 +171,14 @@ async fn handle_client_connection(
                 request_id,
                 session_id,
                 decision,
+                suggestion,
             } => {
                 let _ = tx
                     .send(ClientMessage::PermissionResponse {
                         request_id,
                         session_id,
                         decision,
+                        suggestion,
                     })
                     .await;
             }
@@ -183,6 +187,7 @@ async fn handle_client_connection(
                 session_id,
                 tool,
                 detail,
+                suggestions,
             } => {
                 let (reply_tx, reply_rx) = oneshot::channel();
                 let _ = tx
@@ -191,6 +196,7 @@ async fn handle_client_connection(
                         session_id,
                         tool,
                         detail,
+                        suggestions,
                         reply: reply_tx,
                     })
                     .await;

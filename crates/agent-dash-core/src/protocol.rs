@@ -60,6 +60,8 @@ pub enum ClientRequest {
         request_id: String,
         session_id: String,
         decision: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        suggestion: Option<serde_json::Value>,
     },
     #[serde(rename = "permission_request")]
     PermissionRequest {
@@ -67,6 +69,8 @@ pub enum ClientRequest {
         session_id: String,
         tool: String,
         detail: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        suggestions: Vec<serde_json::Value>,
     },
     #[serde(rename = "get_messages")]
     GetMessages {
@@ -121,6 +125,8 @@ pub enum ServerEvent {
         request_id: String,
         tool: String,
         detail: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        suggestions: Vec<serde_json::Value>,
     },
     #[serde(rename = "permission_resolved")]
     PermissionResolved {
@@ -164,6 +170,8 @@ pub enum ServerEvent {
 pub struct HookPermissionDecision {
     pub request_id: String,
     pub decision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<serde_json::Value>,
 }
 
 // ---------------------------------------------------------------------------
@@ -294,10 +302,25 @@ mod tests {
         let json = r#"{"method":"permission_response","request_id":"tu1","session_id":"s1","decision":"allow"}"#;
         let req: ClientRequest = serde_json::from_str(json).unwrap();
         match req {
-            ClientRequest::PermissionResponse { request_id, session_id, decision } => {
+            ClientRequest::PermissionResponse { request_id, session_id, decision, suggestion } => {
                 assert_eq!(request_id, "tu1");
                 assert_eq!(session_id, "s1");
                 assert_eq!(decision, "allow");
+                assert!(suggestion.is_none());
+            }
+            _ => panic!("expected PermissionResponse"),
+        }
+    }
+
+    #[test]
+    fn deserialize_permission_response_with_suggestion() {
+        let json = r#"{"method":"permission_response","request_id":"tu1","session_id":"s1","decision":"allow","suggestion":{"type":"toolAlwaysAllow","tool":"Bash"}}"#;
+        let req: ClientRequest = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequest::PermissionResponse { suggestion, .. } => {
+                let s = suggestion.unwrap();
+                assert_eq!(s["type"], "toolAlwaysAllow");
+                assert_eq!(s["tool"], "Bash");
             }
             _ => panic!("expected PermissionResponse"),
         }
@@ -307,7 +330,25 @@ mod tests {
     fn deserialize_permission_request() {
         let json = r#"{"method":"permission_request","request_id":"tu1","session_id":"s1","tool":"Bash","detail":"rm -rf /tmp"}"#;
         let req: ClientRequest = serde_json::from_str(json).unwrap();
-        assert!(matches!(req, ClientRequest::PermissionRequest { .. }));
+        match req {
+            ClientRequest::PermissionRequest { suggestions, .. } => {
+                assert!(suggestions.is_empty());
+            }
+            _ => panic!("expected PermissionRequest"),
+        }
+    }
+
+    #[test]
+    fn deserialize_permission_request_with_suggestions() {
+        let json = r#"{"method":"permission_request","request_id":"tu1","session_id":"s1","tool":"Bash","detail":"rm -rf /tmp","suggestions":[{"type":"toolAlwaysAllow","tool":"Bash"}]}"#;
+        let req: ClientRequest = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequest::PermissionRequest { suggestions, .. } => {
+                assert_eq!(suggestions.len(), 1);
+                assert_eq!(suggestions[0]["type"], "toolAlwaysAllow");
+            }
+            _ => panic!("expected PermissionRequest"),
+        }
     }
 
     // -- Server events --
@@ -326,9 +367,27 @@ mod tests {
             request_id: "tu1".into(),
             tool: "Bash".into(),
             detail: "ls".into(),
+            suggestions: vec![],
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"request_id\":\"tu1\""));
+        // Empty suggestions should be omitted
+        assert!(!json.contains("suggestions"));
+    }
+
+    #[test]
+    fn serialize_permission_pending_with_suggestions() {
+        let suggestion = serde_json::json!({"type": "toolAlwaysAllow", "tool": "Bash"});
+        let event = ServerEvent::PermissionPending {
+            session_id: "s1".into(),
+            request_id: "tu1".into(),
+            tool: "Bash".into(),
+            detail: "ls".into(),
+            suggestions: vec![suggestion],
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"suggestions\""));
+        assert!(json.contains("toolAlwaysAllow"));
     }
 
     #[test]
@@ -348,9 +407,25 @@ mod tests {
         let decision = HookPermissionDecision {
             request_id: "tu1".into(),
             decision: "allow".into(),
+            suggestion: None,
         };
         let json = serde_json::to_string(&decision).unwrap();
         assert!(json.contains("\"decision\":\"allow\""));
+        // suggestion: None should be omitted
+        assert!(!json.contains("suggestion"));
+    }
+
+    #[test]
+    fn serialize_hook_permission_decision_with_suggestion() {
+        let suggestion = serde_json::json!({"type": "toolAlwaysAllow", "tool": "Bash"});
+        let decision = HookPermissionDecision {
+            request_id: "tu1".into(),
+            decision: "allow".into(),
+            suggestion: Some(suggestion),
+        };
+        let json = serde_json::to_string(&decision).unwrap();
+        assert!(json.contains("\"suggestion\""));
+        assert!(json.contains("toolAlwaysAllow"));
     }
 
     // -- Line-delimited encoding --

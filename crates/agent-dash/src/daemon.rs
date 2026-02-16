@@ -100,6 +100,7 @@ pub async fn run() {
                                     let _ = waiter.send(HookPermissionDecision {
                                         request_id: request_id.clone(),
                                         decision: "allow".into(),
+                                        suggestion: None,
                                     });
                                 }
                                 // Broadcast resolution.
@@ -137,6 +138,7 @@ pub async fn run() {
                                 request_id: perm.request_id.clone(),
                                 tool: perm.tool.clone(),
                                 detail: perm.detail.clone(),
+                                suggestions: perm.suggestions.clone(),
                             };
                             if let Ok(line) = protocol::encode_line(&pending) {
                                 let _ = tx.try_send(line);
@@ -155,6 +157,7 @@ pub async fn run() {
                     ClientMessage::PermissionResponse {
                         request_id,
                         decision,
+                        suggestion,
                         ..
                     } => {
                         if let Some(perm) = state.resolve_permission(&request_id) {
@@ -163,6 +166,7 @@ pub async fn run() {
                                 let _ = waiter.send(HookPermissionDecision {
                                     request_id: request_id.clone(),
                                     decision: decision.clone(),
+                                    suggestion,
                                 });
                             }
                             // Broadcast resolution.
@@ -180,6 +184,7 @@ pub async fn run() {
                         session_id,
                         tool,
                         detail,
+                        suggestions,
                         reply,
                     } => {
                         state.add_permission_request(
@@ -187,6 +192,7 @@ pub async fn run() {
                             &request_id,
                             &tool,
                             &detail,
+                            suggestions.clone(),
                         );
                         permission_waiters.insert(request_id.clone(), reply);
 
@@ -196,6 +202,7 @@ pub async fn run() {
                             request_id,
                             tool,
                             detail,
+                            suggestions,
                         };
                         broadcast_to_subscribers(&mut subscribers, &pending);
                         state_dirty = true;

@@ -86,6 +86,7 @@ pub fn cmd_permission_response(request_id: &str, decision: &str) {
         request_id: request_id.to_string(),
         session_id: String::new(), // daemon looks up by request_id
         decision: decision.to_string(),
+        suggestion: None,
     };
     send_request(&mut conn, &req);
     println!("Sent {} for {}", decision, request_id);
