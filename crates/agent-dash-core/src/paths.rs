@@ -38,6 +38,18 @@ pub fn project_name_from_cwd(cwd: &Path) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
+/// Config directory for agent-dash settings.
+pub fn config_dir() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("agent-dash")
+}
+
+/// Path to the relay pairing config file.
+pub fn relay_config_path() -> PathBuf {
+    config_dir().join("relay.json")
+}
+
 /// Path to the Claude projects directory.
 pub fn claude_projects_dir() -> PathBuf {
     dirs::home_dir()

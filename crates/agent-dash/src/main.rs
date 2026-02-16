@@ -5,6 +5,7 @@ mod daemon;
 mod hook_cmd;
 mod hook_listener;
 mod messages;
+mod relay_connector;
 mod scanner;
 mod setup;
 mod state;
@@ -107,6 +108,12 @@ enum Commands {
         /// Request ID to deny
         request_id: String,
     },
+
+    /// Remote relay for mobile access
+    Relay {
+        #[command(subcommand)]
+        action: RelayAction,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -117,6 +124,21 @@ enum DaemonAction {
     Stop,
     /// Show daemon status
     Status,
+}
+
+#[derive(Debug, Subcommand)]
+enum RelayAction {
+    /// Generate keypair and display QR code for phone pairing
+    Pair {
+        /// WebSocket URL of the relay server
+        url: String,
+    },
+    /// Start forwarding daemon events to the relay
+    Connect,
+    /// Show relay connection status
+    Status,
+    /// Delete pairing config and keys
+    Unpair,
 }
 
 #[tokio::main]
@@ -180,5 +202,36 @@ async fn main() {
         Some(Commands::Deny { request_id }) => {
             cli::cmd_permission_response(&request_id, "deny");
         }
+        Some(Commands::Relay { action }) => match action {
+            RelayAction::Pair { url } => {
+                let config = relay_connector::generate_pairing(&url);
+                if let Err(e) = config.save() {
+                    eprintln!("Failed to save config: {e}");
+                    std::process::exit(1);
+                }
+                let uri = relay_connector::pairing_uri(&config);
+                println!("Scan this QR code with the agent-dash mobile app:\n");
+                relay_connector::render_qr(&uri);
+                println!("\nPairing URI: {uri}");
+                println!("\nConfig saved to: {}", agent_dash_core::paths::relay_config_path().display());
+            }
+            RelayAction::Connect => {
+                let config = relay_connector::RelayConfig::load().unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    eprintln!("Run `agent-dash relay pair <url>` first.");
+                    std::process::exit(1);
+                });
+                if let Err(e) = relay_connector::run_connector(&config).await {
+                    eprintln!("Relay connector error: {e}");
+                    std::process::exit(1);
+                }
+            }
+            RelayAction::Status => {
+                relay_connector::cmd_status().await;
+            }
+            RelayAction::Unpair => {
+                relay_connector::cmd_unpair();
+            }
+        },
     }
 }
