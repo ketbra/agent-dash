@@ -86,11 +86,16 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
         })
         .expect("failed to open pty");
 
+    // Generate wrapper session ID for daemon registration.
+    let session_id = format!("wrap-{}", std::process::id());
+
     // Build the command with the current working directory.
     let mut cmd = CommandBuilder::new(profile.binary);
     if let Ok(cwd) = std::env::current_dir() {
         cmd.cwd(cwd);
     }
+    // Pass wrapper ID so hooks can link the real session ID back to us.
+    cmd.env("AGENT_DASH_WRAPPER_ID", &session_id);
     for arg in args {
         cmd.arg(arg);
     }
@@ -113,7 +118,6 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
         .expect("failed to take pty writer");
 
     // Try to connect to the daemon and register.
-    let session_id = format!("wrap-{}", std::process::id());
     let daemon_conn = try_connect_daemon();
 
     if let Some(ref conn) = daemon_conn {
@@ -206,9 +210,14 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
                 let Ok(line) = line else { break };
                 if let Ok(event) = serde_json::from_str::<ServerEvent>(&line) {
                     if let ServerEvent::InjectPrompt { text } = event {
-                        let mut data = text.into_bytes();
-                        data.push(b'\n');
-                        if write_tx_inject.send(data).is_err() {
+                        // Send text first, then Enter separately after a
+                        // short delay so the TUI processes them as distinct
+                        // input events.
+                        if write_tx_inject.send(text.into_bytes()).is_err() {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        if write_tx_inject.send(vec![b'\r']).is_err() {
                             break;
                         }
                     }

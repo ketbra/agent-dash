@@ -1,5 +1,5 @@
 use agent_dash_core::paths;
-use agent_dash_core::protocol::HookEvent;
+use agent_dash_core::protocol::HookEnvelope;
 use interprocess::local_socket::{
     tokio::prelude::*,
     GenericFilePath, ListenerOptions,
@@ -8,7 +8,7 @@ use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
 
 /// Run the hook listener. Accepts fire-and-forget connections on hook.sock.
-pub async fn run(tx: mpsc::Sender<HookEvent>) {
+pub async fn run(tx: mpsc::Sender<HookEnvelope>) {
     let name = paths::hook_socket_name();
 
     // Ensure parent directory exists
@@ -50,7 +50,7 @@ pub async fn run(tx: mpsc::Sender<HookEvent>) {
 
 async fn handle_hook_connection(
     mut conn: impl AsyncReadExt + Unpin,
-    tx: mpsc::Sender<HookEvent>,
+    tx: mpsc::Sender<HookEnvelope>,
 ) {
     let mut buf = Vec::with_capacity(4096);
     match conn.read_to_end(&mut buf).await {
@@ -60,9 +60,9 @@ async fn handle_hook_connection(
             if trimmed.is_empty() {
                 return;
             }
-            match serde_json::from_str::<HookEvent>(trimmed) {
-                Ok(event) => {
-                    let _ = tx.send(event).await;
+            match serde_json::from_str::<HookEnvelope>(trimmed) {
+                Ok(envelope) => {
+                    let _ = tx.send(envelope).await;
                 }
                 Err(e) => {
                     eprintln!("agent-dashd: failed to parse hook event: {e}");

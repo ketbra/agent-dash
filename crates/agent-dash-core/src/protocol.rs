@@ -32,6 +32,18 @@ pub enum HookEvent {
     SessionEnd { session_id: String },
 }
 
+/// Envelope wrapping a HookEvent with optional context that applies to all
+/// event types. The `wrapper_id` is set when the hook runs inside a session
+/// launched via `agent-dash run`, allowing the daemon to link the real
+/// session_id to the wrapper's prompt channel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HookEnvelope {
+    #[serde(flatten)]
+    pub event: HookEvent,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrapper_id: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Client requests (client -> daemon, via daemon.sock)
 // ---------------------------------------------------------------------------

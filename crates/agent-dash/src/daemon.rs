@@ -1,5 +1,5 @@
 use agent_dash_core::paths;
-use agent_dash_core::protocol::{self, HookEvent, HookPermissionDecision, ServerEvent};
+use agent_dash_core::protocol::{self, HookEnvelope, HookEvent, HookPermissionDecision, ServerEvent};
 use agent_dash_core::session::DashState;
 use crate::client_listener::{self, ClientMessage};
 use crate::hook_listener;
@@ -26,7 +26,7 @@ pub async fn run() {
     let _ = std::fs::create_dir_all(&cache);
 
     // Channels
-    let (hook_tx, mut hook_rx) = mpsc::channel::<HookEvent>(256);
+    let (hook_tx, mut hook_rx) = mpsc::channel::<HookEnvelope>(256);
     let (client_tx, mut client_rx) = mpsc::channel::<ClientMessage>(256);
 
     // Spawn listeners
@@ -56,7 +56,31 @@ pub async fn run() {
     loop {
         tokio::select! {
             // --- Hook events ---
-            Some(event) = hook_rx.recv() => {
+            Some(envelope) = hook_rx.recv() => {
+                let HookEnvelope { event, wrapper_id } = envelope;
+
+                // If this hook came from a wrapped session, alias the real
+                // session_id to the wrapper's prompt channel so `inject` works.
+                if let Some(ref wid) = wrapper_id {
+                    let hook_session_id = match &event {
+                        HookEvent::ToolStart { session_id, .. }
+                        | HookEvent::ToolEnd { session_id, .. }
+                        | HookEvent::Stop { session_id }
+                        | HookEvent::SessionStart { session_id, .. }
+                        | HookEvent::SessionEnd { session_id } => session_id,
+                    };
+                    if !wrapper_channels.contains_key(hook_session_id) {
+                        if let Some(prompt_tx) = wrapper_channels.get(wid) {
+                            wrapper_channels.insert(hook_session_id.clone(), prompt_tx.clone());
+                        }
+                    }
+                    // Mark the real session as wrapped.
+                    state.ensure_session(hook_session_id);
+                    if let Some(session) = state.sessions.get_mut(hook_session_id) {
+                        session.wrapped = true;
+                    }
+                }
+
                 // Check if a ToolStart or Stop resolves a pending permission
                 // (user approved via terminal rather than through us).
                 match &event {
@@ -325,7 +349,20 @@ pub async fn run() {
                         text,
                         reply,
                     } => {
-                        let response = if let Some(prompt_tx) = wrapper_channels.get(&session_id) {
+                        // Try exact match first, then prefix match (user may
+                        // pass truncated session IDs from `sessions` output).
+                        let prompt_tx = wrapper_channels.get(&session_id).or_else(|| {
+                            let matches: Vec<_> = wrapper_channels
+                                .iter()
+                                .filter(|(k, _)| k.starts_with(&session_id))
+                                .collect();
+                            if matches.len() == 1 {
+                                Some(matches[0].1)
+                            } else {
+                                None
+                            }
+                        });
+                        let response = if let Some(prompt_tx) = prompt_tx {
                             if prompt_tx.try_send(text).is_ok() {
                                 ServerEvent::PromptSent { session_id }
                             } else {

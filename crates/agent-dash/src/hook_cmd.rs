@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use agent_dash_core::paths;
 use agent_dash_core::protocol::{
-    ClientRequest, HookEvent, HookPermissionDecision, encode_line,
+    ClientRequest, HookEnvelope, HookEvent, HookPermissionDecision, encode_line,
 };
 
 pub fn run(event_type: &str) {
@@ -232,6 +232,8 @@ fn extract_tool_detail(input: &serde_json::Value, tool_name: &str) -> String {
 }
 
 /// Send a fire-and-forget event to hook.sock. Exits silently on any error.
+/// Wraps the event in a HookEnvelope that includes wrapper_id if the
+/// AGENT_DASH_WRAPPER_ID env var is set (i.e., running inside `agent-dash run`).
 fn send_hook_event(event: &HookEvent) {
     let sock_path = paths::hook_socket_name();
     if !Path::new(&sock_path).exists() {
@@ -243,7 +245,12 @@ fn send_hook_event(event: &HookEvent) {
         Err(_) => return,
     };
 
-    let line = match encode_line(event) {
+    let envelope = HookEnvelope {
+        event: event.clone(),
+        wrapper_id: std::env::var("AGENT_DASH_WRAPPER_ID").ok(),
+    };
+
+    let line = match encode_line(&envelope) {
         Ok(l) => l,
         Err(_) => return,
     };
