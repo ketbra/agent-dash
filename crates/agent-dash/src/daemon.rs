@@ -228,25 +228,30 @@ pub async fn run() {
                         format,
                         tx,
                     } => {
-                        if let Some(session) = state.sessions.get_mut(&session_id) {
+                        // Resolve truncated session ID to canonical key.
+                        let canonical = resolve_session_key(&session_id, &state)
+                            .unwrap_or(session_id);
+                        if let Some(session) = state.sessions.get_mut(&canonical) {
                             if let Some(ref jsonl) = session.jsonl_path {
                                 let path = std::path::PathBuf::from(jsonl);
                                 let file_len = std::fs::metadata(&path)
                                     .map(|m| m.len())
                                     .unwrap_or(0);
                                 session.watch_offset = Some(file_len);
-                                let _ = session_watcher.watch(&session_id, &path);
+                                let _ = session_watcher.watch(&canonical, &path);
                             }
                         }
                         message_subscribers
-                            .entry(session_id)
+                            .entry(canonical)
                             .or_default()
                             .push((format, tx));
                     }
                     ClientMessage::UnwatchSession { session_id } => {
-                        message_subscribers.remove(&session_id);
-                        session_watcher.unwatch(&session_id);
-                        if let Some(session) = state.sessions.get_mut(&session_id) {
+                        let canonical = resolve_session_key(&session_id, &state)
+                            .unwrap_or(session_id);
+                        message_subscribers.remove(&canonical);
+                        session_watcher.unwatch(&canonical);
+                        if let Some(session) = state.sessions.get_mut(&canonical) {
                             session.watch_offset = None;
                         }
                     }
@@ -519,6 +524,25 @@ fn broadcast_to_subscribers<T: serde::Serialize>(
         return;
     };
     subscribers.retain(|tx| tx.try_send(line.clone()).is_ok());
+}
+
+/// Resolve a possibly-truncated session ID to the canonical key in
+/// daemon state. Returns `None` if no unique match is found.
+fn resolve_session_key(session_id: &str, state: &DaemonState) -> Option<String> {
+    // Exact match.
+    if state.sessions.contains_key(session_id) {
+        return Some(session_id.to_string());
+    }
+    // Unique prefix match.
+    let matches: Vec<_> = state
+        .sessions
+        .keys()
+        .filter(|k| k.starts_with(session_id))
+        .collect();
+    if matches.len() == 1 {
+        return Some(matches[0].clone());
+    }
+    None
 }
 
 /// Resolve a (possibly truncated) session ID to its JSONL path.
