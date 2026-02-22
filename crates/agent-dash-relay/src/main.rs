@@ -18,6 +18,11 @@ struct Cli {
     /// Channel TTL in seconds (evict idle channels with no peers)
     #[arg(long, default_value = "86400")]
     channel_ttl: u64,
+
+    /// Require clients to present this access token during authentication.
+    /// When set, only clients with the matching token can use the relay.
+    #[arg(long)]
+    token: Option<String>,
 }
 
 #[tokio::main]
@@ -29,9 +34,15 @@ async fn main() {
         std::process::exit(1);
     });
 
-    println!("agent-dash-relay listening on {}", cli.bind);
+    if cli.token.is_some() {
+        println!("agent-dash-relay listening on {} (token required)", cli.bind);
+    } else {
+        println!("agent-dash-relay listening on {} (no token — open access)", cli.bind);
+    }
 
     let channel_mgr = channel::spawn(cli.max_buffer, cli.channel_ttl);
+    let required_token: Option<std::sync::Arc<str>> =
+        cli.token.map(|t| std::sync::Arc::from(t.as_str()));
 
     loop {
         let (stream, addr) = match listener.accept().await {
@@ -43,6 +54,7 @@ async fn main() {
         };
 
         let mgr = channel_mgr.clone();
-        tokio::spawn(server::handle_connection(stream, addr, mgr));
+        let token = required_token.clone();
+        tokio::spawn(server::handle_connection(stream, addr, mgr, token));
     }
 }

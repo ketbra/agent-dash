@@ -22,6 +22,9 @@ pub struct RelayConfig {
     pub channel_secret_b64: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phone_public_key_b64: Option<String>,
+    /// Server access token for relay authorization (if the relay requires one).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_token: Option<String>,
 }
 
 impl RelayConfig {
@@ -48,7 +51,7 @@ impl RelayConfig {
 }
 
 /// Generate a new relay pairing config with fresh keys.
-pub fn generate_pairing(relay_url: &str) -> RelayConfig {
+pub fn generate_pairing(relay_url: &str, server_token: Option<String>) -> RelayConfig {
     use crypto_box::SecretKey;
 
     let secret_key = SecretKey::generate(&mut OsRng);
@@ -68,17 +71,23 @@ pub fn generate_pairing(relay_url: &str) -> RelayConfig {
         public_key_b64: BASE64_STANDARD.encode(public_key.as_bytes()),
         channel_secret_b64: BASE64_STANDARD.encode(channel_secret),
         phone_public_key_b64: None,
+        server_token,
     }
 }
 
 /// Build a pairing URI for encoding into a QR code.
 pub fn pairing_uri(config: &RelayConfig) -> String {
-    format!(
+    let mut uri = format!(
         "agentdash://pair?relay={}&secret={}&pk={}",
         urlencoded(&config.relay_url),
         urlencoded(&config.channel_secret_b64),
         urlencoded(&config.public_key_b64),
-    )
+    );
+    if let Some(ref token) = config.server_token {
+        uri.push_str("&token=");
+        uri.push_str(&urlencoded(token));
+    }
+    uri
 }
 
 /// Render a QR code to the terminal using Unicode block characters.
@@ -174,6 +183,7 @@ async fn run_bridge(config: &RelayConfig, salsa_box: &SalsaBox) -> Result<(), St
     let auth = RelayMessage::Auth {
         channel_id: config.channel_id.clone(),
         public_key: config.public_key_b64.clone(),
+        server_token: config.server_token.clone(),
     };
     ws_tx
         .send(Message::Text(serde_json::to_string(&auth).unwrap().into()))
@@ -311,6 +321,10 @@ pub async fn cmd_status() {
             match config.phone_public_key_b64 {
                 Some(pk) => println!("Phone key:   {}...", &pk[..16.min(pk.len())]),
                 None => println!("Phone key:   (not paired)"),
+            }
+            match config.server_token {
+                Some(_) => println!("Server token: (configured)"),
+                None => println!("Server token: (none)"),
             }
         }
         Err(e) => {

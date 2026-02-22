@@ -132,6 +132,9 @@ enum RelayAction {
     Pair {
         /// WebSocket URL of the relay server
         url: String,
+        /// Server access token (must match the relay's --token value)
+        #[arg(long)]
+        token: Option<String>,
     },
     /// Start forwarding daemon events to the relay
     Connect,
@@ -203,8 +206,8 @@ async fn main() {
             cli::cmd_permission_response(&request_id, "deny");
         }
         Some(Commands::Relay { action }) => match action {
-            RelayAction::Pair { url } => {
-                let config = relay_connector::generate_pairing(&url);
+            RelayAction::Pair { url, token } => {
+                let config = relay_connector::generate_pairing(&url, token);
                 if let Err(e) = config.save() {
                     eprintln!("Failed to save config: {e}");
                     std::process::exit(1);

@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use agent_dash_core::relay::RelayMessage;
 use futures_util::{SinkExt, StreamExt};
@@ -13,6 +14,7 @@ pub async fn handle_connection(
     stream: TcpStream,
     addr: SocketAddr,
     channel_mgr: mpsc::Sender<ChannelCmd>,
+    required_token: Option<Arc<str>>,
 ) {
     let ws_stream = match tokio_tungstenite::accept_async(stream).await {
         Ok(ws) => ws,
@@ -43,7 +45,27 @@ pub async fn handle_connection(
             Ok(RelayMessage::Auth {
                 channel_id,
                 public_key,
+                server_token,
             }) => {
+                // Validate server access token if the relay requires one.
+                if let Some(ref expected) = required_token {
+                    match server_token {
+                        Some(ref provided) if provided.as_str() == &**expected => {
+                            // Token matches — allow.
+                        }
+                        _ => {
+                            let err = RelayMessage::AuthError {
+                                message: "invalid or missing server token".into(),
+                            };
+                            let _ = ws_tx
+                                .send(Message::Text(
+                                    serde_json::to_string(&err).unwrap().into(),
+                                ))
+                                .await;
+                            return;
+                        }
+                    }
+                }
                 break (channel_id, public_key);
             }
             Ok(_) => {
@@ -174,4 +196,162 @@ pub async fn handle_connection(
         .await;
 
     println!("[{addr}] disconnected");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::net::TcpListener;
+    use tokio_tungstenite::connect_async;
+
+    /// Helper: start a relay on an ephemeral port with an optional token,
+    /// returning the WebSocket URL.
+    async fn start_relay(token: Option<&str>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let channel_mgr = crate::channel::spawn(100, 3600);
+        let required_token: Option<Arc<str>> = token.map(|t| Arc::from(t));
+
+        tokio::spawn(async move {
+            loop {
+                let (stream, addr) = listener.accept().await.unwrap();
+                let mgr = channel_mgr.clone();
+                let tok = required_token.clone();
+                tokio::spawn(handle_connection(stream, addr, mgr, tok));
+            }
+        });
+
+        format!("ws://127.0.0.1:{port}")
+    }
+
+    #[tokio::test]
+    async fn auth_without_token_when_not_required() {
+        let url = start_relay(None).await;
+        let (ws, _) = connect_async(&url).await.unwrap();
+        let (mut tx, mut rx) = ws.split();
+
+        let auth = RelayMessage::Auth {
+            channel_id: "ch1".into(),
+            public_key: "pk1".into(),
+            server_token: None,
+        };
+        tx.send(Message::Text(serde_json::to_string(&auth).unwrap().into()))
+            .await
+            .unwrap();
+
+        let resp = rx.next().await.unwrap().unwrap();
+        let text = match resp {
+            Message::Text(t) => t,
+            other => panic!("expected text, got {other:?}"),
+        };
+        let msg: RelayMessage = serde_json::from_str(&text).unwrap();
+        assert!(matches!(msg, RelayMessage::AuthOk { .. }));
+    }
+
+    #[tokio::test]
+    async fn auth_with_correct_token() {
+        let url = start_relay(Some("my-secret")).await;
+        let (ws, _) = connect_async(&url).await.unwrap();
+        let (mut tx, mut rx) = ws.split();
+
+        let auth = RelayMessage::Auth {
+            channel_id: "ch1".into(),
+            public_key: "pk1".into(),
+            server_token: Some("my-secret".into()),
+        };
+        tx.send(Message::Text(serde_json::to_string(&auth).unwrap().into()))
+            .await
+            .unwrap();
+
+        let resp = rx.next().await.unwrap().unwrap();
+        let msg: RelayMessage = serde_json::from_str(&*match resp {
+            Message::Text(t) => t,
+            other => panic!("expected text, got {other:?}"),
+        })
+        .unwrap();
+        assert!(matches!(msg, RelayMessage::AuthOk { .. }));
+    }
+
+    #[tokio::test]
+    async fn auth_rejected_with_wrong_token() {
+        let url = start_relay(Some("my-secret")).await;
+        let (ws, _) = connect_async(&url).await.unwrap();
+        let (mut tx, mut rx) = ws.split();
+
+        let auth = RelayMessage::Auth {
+            channel_id: "ch1".into(),
+            public_key: "pk1".into(),
+            server_token: Some("wrong-token".into()),
+        };
+        tx.send(Message::Text(serde_json::to_string(&auth).unwrap().into()))
+            .await
+            .unwrap();
+
+        let resp = rx.next().await.unwrap().unwrap();
+        let msg: RelayMessage = serde_json::from_str(&*match resp {
+            Message::Text(t) => t,
+            other => panic!("expected text, got {other:?}"),
+        })
+        .unwrap();
+        match msg {
+            RelayMessage::AuthError { message } => {
+                assert!(message.contains("invalid or missing server token"));
+            }
+            other => panic!("expected AuthError, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn auth_rejected_with_missing_token() {
+        let url = start_relay(Some("my-secret")).await;
+        let (ws, _) = connect_async(&url).await.unwrap();
+        let (mut tx, mut rx) = ws.split();
+
+        let auth = RelayMessage::Auth {
+            channel_id: "ch1".into(),
+            public_key: "pk1".into(),
+            server_token: None,
+        };
+        tx.send(Message::Text(serde_json::to_string(&auth).unwrap().into()))
+            .await
+            .unwrap();
+
+        let resp = rx.next().await.unwrap().unwrap();
+        let msg: RelayMessage = serde_json::from_str(&*match resp {
+            Message::Text(t) => t,
+            other => panic!("expected text, got {other:?}"),
+        })
+        .unwrap();
+        match msg {
+            RelayMessage::AuthError { message } => {
+                assert!(message.contains("invalid or missing server token"));
+            }
+            other => panic!("expected AuthError, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn token_not_required_allows_any_client() {
+        let url = start_relay(None).await;
+        let (ws, _) = connect_async(&url).await.unwrap();
+        let (mut tx, mut rx) = ws.split();
+
+        // Client sends a token even though relay doesn't require one — should still work.
+        let auth = RelayMessage::Auth {
+            channel_id: "ch1".into(),
+            public_key: "pk1".into(),
+            server_token: Some("extra-token".into()),
+        };
+        tx.send(Message::Text(serde_json::to_string(&auth).unwrap().into()))
+            .await
+            .unwrap();
+
+        let resp = rx.next().await.unwrap().unwrap();
+        let msg: RelayMessage = serde_json::from_str(&*match resp {
+            Message::Text(t) => t,
+            other => panic!("expected text, got {other:?}"),
+        })
+        .unwrap();
+        assert!(matches!(msg, RelayMessage::AuthOk { .. }));
+    }
 }
