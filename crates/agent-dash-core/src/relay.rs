@@ -9,6 +9,9 @@ pub enum RelayMessage {
     Auth {
         channel_id: String,
         public_key: String,
+        /// Optional server access token for relay authorization.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        server_token: Option<String>,
     },
 
     /// Relay -> client: auth accepted.
@@ -61,11 +64,25 @@ mod tests {
         let msg = RelayMessage::Auth {
             channel_id: "abc123".into(),
             public_key: "cGsK".into(),
+            server_token: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"type\":\"auth\""));
         assert!(json.contains("\"channel_id\":\"abc123\""));
         assert!(json.contains("\"public_key\":\"cGsK\""));
+        // server_token should be omitted when None
+        assert!(!json.contains("server_token"));
+    }
+
+    #[test]
+    fn serialize_auth_with_token() {
+        let msg = RelayMessage::Auth {
+            channel_id: "abc123".into(),
+            public_key: "cGsK".into(),
+            server_token: Some("my-secret-token".into()),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"server_token\":\"my-secret-token\""));
     }
 
     #[test]
@@ -73,13 +90,34 @@ mod tests {
         let msg = RelayMessage::Auth {
             channel_id: "ch1".into(),
             public_key: "pk1".into(),
+            server_token: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: RelayMessage = serde_json::from_str(&json).unwrap();
         match decoded {
-            RelayMessage::Auth { channel_id, public_key } => {
+            RelayMessage::Auth { channel_id, public_key, server_token } => {
                 assert_eq!(channel_id, "ch1");
                 assert_eq!(public_key, "pk1");
+                assert_eq!(server_token, None);
+            }
+            _ => panic!("expected Auth"),
+        }
+    }
+
+    #[test]
+    fn round_trip_auth_with_token() {
+        let msg = RelayMessage::Auth {
+            channel_id: "ch1".into(),
+            public_key: "pk1".into(),
+            server_token: Some("tok".into()),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let decoded: RelayMessage = serde_json::from_str(&json).unwrap();
+        match decoded {
+            RelayMessage::Auth { channel_id, public_key, server_token } => {
+                assert_eq!(channel_id, "ch1");
+                assert_eq!(public_key, "pk1");
+                assert_eq!(server_token, Some("tok".into()));
             }
             _ => panic!("expected Auth"),
         }
