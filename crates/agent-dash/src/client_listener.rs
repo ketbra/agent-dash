@@ -292,12 +292,39 @@ async fn handle_client_connection(
                     })
                     .await;
 
-                // Stream prompts to this wrapper until disconnect.
-                while let Some(text) = prompt_rx.recv().await {
-                    let event = ServerEvent::InjectPrompt { text };
-                    if let Ok(line) = protocol::encode_line(&event) {
-                        if writer.write_all(line.as_bytes()).await.is_err() {
-                            break;
+                // Stream prompts to this wrapper while also monitoring the
+                // client reader for disconnect (EOF) or explicit messages.
+                loop {
+                    tokio::select! {
+                        prompt = prompt_rx.recv() => {
+                            match prompt {
+                                Some(text) => {
+                                    let event = ServerEvent::InjectPrompt { text };
+                                    if let Ok(line) = protocol::encode_line(&event) {
+                                        if writer.write_all(line.as_bytes()).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                }
+                                None => break, // daemon dropped prompt channel
+                            }
+                        }
+                        line_result = lines.next_line() => {
+                            match line_result {
+                                Ok(Some(line)) => {
+                                    // Client sent a message in wrapper mode.
+                                    // Handle explicit unregister; ignore others.
+                                    let trimmed = line.trim();
+                                    if !trimmed.is_empty() {
+                                        if let Ok(ClientRequest::UnregisterWrapper { .. }) =
+                                            serde_json::from_str::<ClientRequest>(trimmed)
+                                        {
+                                            break;
+                                        }
+                                    }
+                                }
+                                _ => break, // EOF or error — client disconnected
+                            }
                         }
                     }
                 }
