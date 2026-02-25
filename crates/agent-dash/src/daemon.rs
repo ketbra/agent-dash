@@ -118,7 +118,39 @@ pub async fn run(web_port: u16) {
                     _ => {}
                 }
 
+                // Extract the session_id before consuming the event.
+                let hook_sid = match &event {
+                    HookEvent::ToolStart { session_id, .. }
+                    | HookEvent::ToolEnd { session_id, .. }
+                    | HookEvent::Stop { session_id }
+                    | HookEvent::SessionStart { session_id, .. }
+                    | HookEvent::SessionEnd { session_id } => session_id.clone(),
+                };
+
                 state.apply_hook_event(event);
+
+                // Populate jsonl_path if missing (on the real session and its wrapper).
+                if let Some(session) = state.sessions.get(&hook_sid) {
+                    if session.jsonl_path.is_none() {
+                        if let Some(path) = resolve_jsonl_path(&hook_sid, &state) {
+                            let path_str = path.to_string_lossy().to_string();
+                            if let Some(s) = state.sessions.get_mut(&hook_sid) {
+                                s.jsonl_path = Some(path_str.clone());
+                            }
+                            // Also set on the wrapper session so the UI can find it.
+                            if let Some(ref wid) = wrapper_id {
+                                if *wid != hook_sid {
+                                    if let Some(ws) = state.sessions.get_mut(wid) {
+                                        if ws.jsonl_path.is_none() {
+                                            ws.jsonl_path = Some(path_str);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 state_dirty = true;
                 broadcast_state(&mut subscribers, &state);
             }
@@ -544,7 +576,30 @@ fn resolve_jsonl_path(session_id: &str, state: &DaemonState) -> Option<std::path
         }
     }
 
-    // 3. Search JSONL files in Claude's projects directory by filename prefix.
+    // 3. For wrapper sessions, check child sessions that are linked via
+    //    parent_wrapper_id — their jsonl_path is the main conversation.
+    for (_, child) in state.sessions.iter() {
+        if child.parent_wrapper_id.as_deref() == Some(session_id) {
+            if let Some(ref p) = child.jsonl_path {
+                return Some(std::path::PathBuf::from(p));
+            }
+            // Child exists but has no jsonl_path — try filesystem for it.
+            if let Some(path) = find_jsonl_on_disk(&child.session_id) {
+                return Some(path);
+            }
+        }
+    }
+
+    // 4. Search JSONL files in Claude's projects directory by filename prefix.
+    if let Some(path) = find_jsonl_on_disk(session_id) {
+        return Some(path);
+    }
+
+    None
+}
+
+/// Search `~/.claude/projects/` for a JSONL file whose name starts with the given ID.
+fn find_jsonl_on_disk(session_id: &str) -> Option<std::path::PathBuf> {
     let projects_dir = paths::claude_projects_dir();
     if let Ok(project_dirs) = std::fs::read_dir(&projects_dir) {
         for project_entry in project_dirs.flatten() {
@@ -565,7 +620,6 @@ fn resolve_jsonl_path(session_id: &str, state: &DaemonState) -> Option<std::path
             }
         }
     }
-
     None
 }
 
