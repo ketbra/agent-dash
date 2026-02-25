@@ -166,10 +166,15 @@ pub async fn run(web_port: u16) {
                         if let Ok(line) = protocol::encode_line(&update) {
                             let _ = tx.try_send(line);
                         }
-                        // Send any pending permissions.
+                        // Send any pending permissions (using wrapper ID for display).
                         for perm in state.pending_permissions.values() {
+                            let display_sid = state
+                                .sessions
+                                .get(&perm.session_id)
+                                .and_then(|s| s.parent_wrapper_id.clone())
+                                .unwrap_or_else(|| perm.session_id.clone());
                             let pending = ServerEvent::PermissionPending {
-                                session_id: perm.session_id.clone(),
+                                session_id: display_sid,
                                 request_id: perm.request_id.clone(),
                                 tool: perm.tool.clone(),
                                 detail: perm.detail.clone(),
@@ -236,9 +241,16 @@ pub async fn run(web_port: u16) {
                         );
                         permission_waiters.insert(request_id.clone(), reply);
 
-                        // Broadcast permission pending.
+                        // Broadcast permission pending. If this session is a
+                        // subagent/child, use the parent wrapper_id so the UI
+                        // (which shows wrapper sessions) can match it.
+                        let display_session_id = state
+                            .sessions
+                            .get(&session_id)
+                            .and_then(|s| s.parent_wrapper_id.clone())
+                            .unwrap_or(session_id);
                         let pending = ServerEvent::PermissionPending {
-                            session_id,
+                            session_id: display_session_id,
                             request_id,
                             tool,
                             detail,

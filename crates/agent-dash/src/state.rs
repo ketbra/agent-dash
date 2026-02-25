@@ -159,6 +159,15 @@ impl DaemonState {
             },
         );
         self.set_status(session_id, SessionStatus::NeedsInput);
+        // Also mark the parent wrapper session as NeedsInput so the web UI
+        // (which only shows wrapper sessions) reflects the status.
+        if let Some(parent_id) = self
+            .sessions
+            .get(session_id)
+            .and_then(|s| s.parent_wrapper_id.clone())
+        {
+            self.set_status(&parent_id, SessionStatus::NeedsInput);
+        }
     }
 
     /// Resolve (remove) a permission request. If no more pending permissions
@@ -178,6 +187,18 @@ impl DaemonState {
             if let Some(session) = self.sessions.get(&session_id) {
                 if session.status == SessionStatus::NeedsInput {
                     self.set_status(&session_id, SessionStatus::Idle);
+                }
+            }
+            // Also clear the parent wrapper's NeedsInput.
+            if let Some(parent_id) = self
+                .sessions
+                .get(&session_id)
+                .and_then(|s| s.parent_wrapper_id.clone())
+            {
+                if let Some(parent) = self.sessions.get(&parent_id) {
+                    if parent.status == SessionStatus::NeedsInput {
+                        self.set_status(&parent_id, SessionStatus::Idle);
+                    }
                 }
             }
         }
@@ -241,9 +262,19 @@ impl DaemonState {
                     })
                 } else {
                     // Find the first pending permission for this session.
+                    // For wrapper (main) sessions, permissions are stored under
+                    // the real child session_id, so also match children whose
+                    // parent_wrapper_id points to this session.
                     self.pending_permissions
                         .values()
-                        .find(|p| p.session_id == s.session_id)
+                        .find(|p| {
+                            p.session_id == s.session_id
+                                || self
+                                    .sessions
+                                    .get(&p.session_id)
+                                    .and_then(|child| child.parent_wrapper_id.as_deref())
+                                    == Some(&s.session_id)
+                        })
                         .map(|p| DashInputReason {
                             reason_type: "permission".into(),
                             tool: Some(p.tool.clone()),
@@ -450,5 +481,67 @@ mod tests {
         assert!(!state.sessions.contains_key("sub-a"));
         assert!(!state.sessions.contains_key("sub-b"));
         assert!(state.sessions.contains_key("wrap-2"));
+    }
+
+    #[test]
+    fn permission_on_child_shows_on_wrapper() {
+        let mut state = DaemonState::new();
+
+        // Wrapper (main) session.
+        state.ensure_session("wrap-1");
+        state.sessions.get_mut("wrap-1").unwrap().is_main = true;
+
+        // Child session linked to wrapper.
+        state.ensure_session("child-1");
+        state.sessions.get_mut("child-1").unwrap().parent_wrapper_id =
+            Some("wrap-1".into());
+
+        // Permission filed under the child session_id.
+        state.add_permission_request("child-1", "perm-1", "Bash", "rm -rf /tmp", vec![]);
+
+        // The wrapper (shown in to_dash_sessions) should surface the permission.
+        let sessions = state.to_dash_sessions();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_id, "wrap-1");
+        let ir = sessions[0].input_reason.as_ref().expect("should have input_reason");
+        assert_eq!(ir.reason_type, "permission");
+        assert_eq!(ir.tool.as_deref(), Some("Bash"));
+    }
+
+    #[test]
+    fn permission_resolve_clears_wrapper_status() {
+        let mut state = DaemonState::new();
+
+        state.ensure_session("wrap-1");
+        state.sessions.get_mut("wrap-1").unwrap().is_main = true;
+
+        state.ensure_session("child-1");
+        state.sessions.get_mut("child-1").unwrap().parent_wrapper_id =
+            Some("wrap-1".into());
+
+        state.add_permission_request("child-1", "perm-1", "Bash", "ls", vec![]);
+
+        // Both child and wrapper should be NeedsInput.
+        assert_eq!(
+            state.sessions.get("child-1").unwrap().status,
+            SessionStatus::NeedsInput,
+        );
+        assert_eq!(
+            state.sessions.get("wrap-1").unwrap().status,
+            SessionStatus::NeedsInput,
+        );
+
+        // Resolve the permission.
+        state.resolve_permission("perm-1");
+
+        // Both should be back to Idle.
+        assert_eq!(
+            state.sessions.get("child-1").unwrap().status,
+            SessionStatus::Idle,
+        );
+        assert_eq!(
+            state.sessions.get("wrap-1").unwrap().status,
+            SessionStatus::Idle,
+        );
     }
 }
