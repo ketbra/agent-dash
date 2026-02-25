@@ -12,7 +12,6 @@ serde_json = "1"
 dirs = "6"
 tokio = { version = "1", features = ["full"] }
 interprocess = { version = "2", features = ["tokio"] }
-sysinfo = "0.34"
 notify = "7"
 comrak = { version = "0.36", default-features = false }
 clap = { version = "4", features = ["derive"] }

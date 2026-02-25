@@ -4,10 +4,9 @@ use agent_dash_core::session::DashState;
 use crate::client_listener::{self, ClientMessage};
 use crate::hook_listener;
 use crate::messages;
-use crate::scanner;
 use crate::watcher;
 use crate::state::DaemonState;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 
@@ -45,12 +44,10 @@ pub async fn run() {
         HashMap::new();
     let mut wrapper_channels: HashMap<String, mpsc::Sender<String>> = HashMap::new();
 
-    let mut scan_interval = tokio::time::interval(Duration::from_secs(5));
     let mut write_interval = tokio::time::interval(Duration::from_millis(500));
     let mut state_dirty = false;
 
     // Don't delay the first tick.
-    scan_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     write_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
@@ -378,82 +375,6 @@ pub async fn run() {
                         let _ = reply.send(protocol::encode_line(&response).unwrap_or_default());
                     }
                 }
-            }
-
-            // --- Periodic process scan ---
-            _ = scan_interval.tick() => {
-                let processes = scanner::scan_claude_processes();
-                let projects_dir = paths::claude_projects_dir();
-
-                // Group processes by project slug to deduplicate subagents
-                // sharing the same CWD.
-                let mut slug_groups: HashMap<String, Vec<(u32, &scanner::ClaudeProcess)>> =
-                    HashMap::new();
-                for (pid, proc_info) in &processes {
-                    let slug = paths::cwd_to_project_slug(&proc_info.cwd);
-                    slug_groups.entry(slug).or_default().push((*pid, proc_info));
-                }
-
-                let mut active_session_ids: HashSet<String> = HashSet::new();
-
-                for (slug, group) in &mut slug_groups {
-                    // Sort by PID for a stable representative.
-                    group.sort_by_key(|(pid, _)| *pid);
-                    let (_representative_pid, proc_info) = group[0];
-                    let project_name = paths::project_name_from_cwd(&proc_info.cwd);
-
-                    // Look up JSONL once per slug, not per PID.
-                    let project_dir = projects_dir.join(slug.as_str());
-                    let jsonl_path = scanner::find_latest_jsonl(&project_dir);
-
-                    let (session_id, branch, has_pending_question, question_text) =
-                        if let Some(ref jsonl) = jsonl_path {
-                            if let Some(status) = scanner::parse_jsonl_status(jsonl) {
-                                (
-                                    status.session_id,
-                                    status.git_branch,
-                                    status.has_pending_question,
-                                    status.question_text,
-                                )
-                            } else {
-                                // No parseable session info; use slug as fallback ID.
-                                (format!("scan-{slug}"), String::new(), false, None)
-                            }
-                        } else {
-                            (format!("scan-{slug}"), String::new(), false, None)
-                        };
-
-                    active_session_ids.insert(session_id.clone());
-                    state.ensure_session(&session_id);
-                    if let Some(session) = state.sessions.get_mut(&session_id) {
-                        session.cwd = Some(proc_info.cwd.to_string_lossy().to_string());
-                        session.project_name = project_name;
-                        session.branch = branch;
-                        session.has_pending_question = has_pending_question;
-                        session.question_text = question_text;
-                        if let Some(ref jsonl) = jsonl_path {
-                            session.jsonl_path =
-                                Some(jsonl.to_string_lossy().to_string());
-                        }
-                    }
-                }
-
-                // Prune sessions no longer active.
-                // Keep hook-only sessions (pid=None) if updated within last 5 minutes.
-                let now_secs = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                state.sessions.retain(|id, session| {
-                    if active_session_ids.contains(id) {
-                        return true;
-                    }
-                    // Keep sessions not found by scanner if recently active.
-                    now_secs.saturating_sub(session.last_status_change) < 300
-                });
-
-                state_dirty = true;
-                broadcast_state(&mut subscribers, &state);
             }
 
             // --- File change events (for watch_session subscribers) ---

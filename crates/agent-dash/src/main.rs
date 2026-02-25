@@ -7,7 +7,6 @@ mod hook_listener;
 mod jsonl;
 mod messages;
 mod relay_connector;
-mod scanner;
 mod setup;
 mod state;
 mod watcher;
