@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>agent-dash</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <h2>Sessions</h2>
+      <ul id="session-list"></ul>
+    </aside>
+    <main id="main">
+      <div id="permission-banner" class="hidden"></div>
+      <div id="messages"></div>
+      <form id="prompt-form" class="hidden">
+        <input type="text" id="prompt-input" placeholder="Send a prompt..." autocomplete="off">
+        <button type="submit">Send</button>
+      </form>
+    </main>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>
