@@ -15,6 +15,7 @@ pub enum ClientMessage {
     },
     /// Client requests current state snapshot.
     GetState {
+        include_subagents: bool,
         reply: oneshot::Sender<String>,
     },
     /// Client sent a permission response (allow/deny/allow_similar).
@@ -160,9 +161,9 @@ async fn handle_client_connection(
                 // Connection is done after subscribe stream ends.
                 return;
             }
-            ClientRequest::GetState => {
+            ClientRequest::GetState { include_subagents } => {
                 let (reply_tx, reply_rx) = oneshot::channel();
-                let _ = tx.send(ClientMessage::GetState { reply: reply_tx }).await;
+                let _ = tx.send(ClientMessage::GetState { include_subagents, reply: reply_tx }).await;
                 if let Ok(json) = reply_rx.await {
                     let _ = writer.write_all(json.as_bytes()).await;
                 }
@@ -272,7 +273,7 @@ async fn handle_client_connection(
                     let _ = writer.write_all(json.as_bytes()).await;
                 }
             }
-            ClientRequest::RegisterWrapper { session_id, agent } => {
+            ClientRequest::RegisterWrapper { session_id, agent, .. } => {
                 // Create a channel for prompt injection.
                 let (prompt_tx, mut prompt_rx) = mpsc::channel::<String>(16);
                 let _ = tx

@@ -231,6 +231,7 @@ impl DaemonState {
                     jsonl_path: s.jsonl_path.clone(),
                     input_reason,
                     active_tool,
+                    subagent_count: 0,
                 }
             })
             .collect();

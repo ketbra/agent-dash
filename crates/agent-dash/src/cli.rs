@@ -32,7 +32,7 @@ fn truncate(s: &str, max: usize) -> &str {
 /// Print current sessions in a table format, or "No active sessions." if empty.
 pub fn cmd_status() {
     let mut conn = connect();
-    send_request(&mut conn, &ClientRequest::GetState);
+    send_request(&mut conn, &ClientRequest::GetState { include_subagents: false });
 
     let reader = io::BufReader::new(&conn);
     for line in reader.lines() {

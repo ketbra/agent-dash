@@ -146,7 +146,7 @@ pub async fn run() {
                         }
                         subscribers.push(tx);
                     }
-                    ClientMessage::GetState { reply } => {
+                    ClientMessage::GetState { include_subagents: _, reply } => {
                         let event = ServerEvent::StateUpdate {
                             sessions: state.to_dash_sessions(),
                         };

@@ -35,6 +35,8 @@ pub struct DashState {
     pub sessions: Vec<DashSession>,
 }
 
+fn is_zero(v: &usize) -> bool { *v == 0 }
+
 /// A single session in the JSON output (serializable for clients).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashSession {
@@ -49,6 +51,8 @@ pub struct DashSession {
     pub input_reason: Option<DashInputReason>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_tool: Option<DashActiveTool>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub subagent_count: usize,
 }
 
 /// Why a session needs input.
@@ -120,11 +124,13 @@ mod tests {
             jsonl_path: None,
             input_reason: None,
             active_tool: None,
+            subagent_count: 0,
         };
         let json = serde_json::to_string(&ds).unwrap();
         assert!(json.contains("\"status\":\"idle\""));
         assert!(!json.contains("input_reason"));
         assert!(!json.contains("active_tool"));
+        assert!(!json.contains("subagent_count"));
     }
 
     #[test]
@@ -142,6 +148,7 @@ mod tests {
                 detail: "cargo test".into(),
                 icon: "utilities-terminal-symbolic".into(),
             }),
+            subagent_count: 0,
         };
         let json = serde_json::to_string(&ds).unwrap();
         assert!(json.contains("\"name\":\"Bash\""));
@@ -176,6 +183,7 @@ mod tests {
                 text: None,
             }),
             active_tool: None,
+            subagent_count: 0,
         };
         let json = serde_json::to_string(&ds).unwrap();
         let parsed: DashSession = serde_json::from_str(&json).unwrap();

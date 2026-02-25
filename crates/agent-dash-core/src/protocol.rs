@@ -54,7 +54,10 @@ pub enum ClientRequest {
     #[serde(rename = "subscribe")]
     Subscribe,
     #[serde(rename = "get_state")]
-    GetState,
+    GetState {
+        #[serde(default)]
+        include_subagents: bool,
+    },
     #[serde(rename = "permission_response")]
     PermissionResponse {
         request_id: String,
@@ -98,6 +101,14 @@ pub enum ClientRequest {
     RegisterWrapper {
         session_id: String,
         agent: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        branch: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project_name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        real_session_id: Option<String>,
     },
     #[serde(rename = "unregister_wrapper")]
     UnregisterWrapper {
@@ -294,7 +305,7 @@ mod tests {
     fn deserialize_get_state() {
         let json = r#"{"method":"get_state"}"#;
         let req: ClientRequest = serde_json::from_str(json).unwrap();
-        assert!(matches!(req, ClientRequest::GetState));
+        assert!(matches!(req, ClientRequest::GetState { .. }));
     }
 
     #[test]
@@ -560,7 +571,7 @@ mod tests {
         let json = r#"{"method":"register_wrapper","session_id":"s1","agent":"claude"}"#;
         let req: ClientRequest = serde_json::from_str(json).unwrap();
         match req {
-            ClientRequest::RegisterWrapper { session_id, agent } => {
+            ClientRequest::RegisterWrapper { session_id, agent, .. } => {
                 assert_eq!(session_id, "s1");
                 assert_eq!(agent, "claude");
             }
@@ -608,6 +619,63 @@ mod tests {
         let event = ServerEvent::Error { message: "not wrapped".into() };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"event\":\"error\""));
+    }
+
+    // -- RegisterWrapper with metadata --
+
+    #[test]
+    fn deserialize_register_wrapper_with_metadata() {
+        let json = r#"{"method":"register_wrapper","session_id":"wrap-1","agent":"claude","cwd":"/home/user/project","branch":"main","project_name":"project"}"#;
+        let req: ClientRequest = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequest::RegisterWrapper { session_id, agent, cwd, branch, project_name, .. } => {
+                assert_eq!(session_id, "wrap-1");
+                assert_eq!(agent, "claude");
+                assert_eq!(cwd.as_deref(), Some("/home/user/project"));
+                assert_eq!(branch.as_deref(), Some("main"));
+                assert_eq!(project_name.as_deref(), Some("project"));
+            }
+            _ => panic!("expected RegisterWrapper"),
+        }
+    }
+
+    #[test]
+    fn deserialize_register_wrapper_backwards_compat() {
+        let json = r#"{"method":"register_wrapper","session_id":"s1","agent":"claude"}"#;
+        let req: ClientRequest = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequest::RegisterWrapper { cwd, branch, project_name, real_session_id, .. } => {
+                assert!(cwd.is_none());
+                assert!(branch.is_none());
+                assert!(project_name.is_none());
+                assert!(real_session_id.is_none());
+            }
+            _ => panic!("expected RegisterWrapper"),
+        }
+    }
+
+    #[test]
+    fn deserialize_get_state_with_include_subagents() {
+        let json = r#"{"method":"get_state","include_subagents":true}"#;
+        let req: ClientRequest = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequest::GetState { include_subagents } => {
+                assert!(include_subagents);
+            }
+            _ => panic!("expected GetState"),
+        }
+    }
+
+    #[test]
+    fn deserialize_get_state_backwards_compat() {
+        let json = r#"{"method":"get_state"}"#;
+        let req: ClientRequest = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequest::GetState { include_subagents } => {
+                assert!(!include_subagents);
+            }
+            _ => panic!("expected GetState"),
+        }
     }
 
     // -- HookEnvelope round-trip (flattened serde) --

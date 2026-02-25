@@ -124,6 +124,10 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
         let req = ClientRequest::RegisterWrapper {
             session_id: session_id.clone(),
             agent: profile.name.to_string(),
+            cwd: None,
+            branch: None,
+            project_name: None,
+            real_session_id: None,
         };
         let _ = send_to_daemon(conn, &req);
     }
