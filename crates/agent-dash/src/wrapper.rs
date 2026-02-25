@@ -121,12 +121,20 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
     let daemon_conn = try_connect_daemon();
 
     if let Some(ref conn) = daemon_conn {
+        let cwd = std::env::current_dir().ok();
+        let branch = cwd.as_ref().map(|d| git_branch(d)).unwrap_or_default();
+        let project_name = cwd
+            .as_ref()
+            .and_then(|d| d.file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
         let req = ClientRequest::RegisterWrapper {
             session_id: session_id.clone(),
             agent: profile.name.to_string(),
-            cwd: None,
-            branch: None,
-            project_name: None,
+            cwd: cwd.map(|d| d.to_string_lossy().to_string()),
+            branch: Some(branch),
+            project_name: Some(project_name),
             real_session_id: None,
         };
         let _ = send_to_daemon(conn, &req);
@@ -202,29 +210,80 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
     };
 
     // --- Daemon listener thread: listens for inject_prompt commands ---
+    // Reconnects automatically if the daemon restarts.
     if let Some(conn) = daemon_conn {
         let write_tx_inject = write_tx.clone();
         let running_daemon = running.clone();
+        let session_id_daemon = session_id.clone();
+        let agent_name = profile.name.to_string();
         std::thread::spawn(move || {
-            let reader = BufReader::new(&conn);
-            for line in reader.lines() {
-                if !running_daemon.load(Ordering::Relaxed) {
-                    break;
-                }
-                let Ok(line) = line else { break };
-                if let Ok(event) = serde_json::from_str::<ServerEvent>(&line) {
-                    if let ServerEvent::InjectPrompt { text } = event {
-                        // Send text first, then Enter separately after a
-                        // short delay so the TUI processes them as distinct
-                        // input events.
-                        if write_tx_inject.send(text.into_bytes()).is_err() {
-                            break;
+            let mut conn = conn;
+            loop {
+                // Read events from daemon using a cloned stream so the
+                // borrow does not prevent reassigning `conn` later.
+                {
+                    let stream_clone = match conn.try_clone() {
+                        Ok(c) => c,
+                        Err(_) => break,
+                    };
+                    let reader = BufReader::new(stream_clone);
+                    for line in reader.lines() {
+                        if !running_daemon.load(Ordering::Relaxed) {
+                            return;
                         }
-                        std::thread::sleep(std::time::Duration::from_millis(50));
-                        if write_tx_inject.send(vec![b'\r']).is_err() {
+                        let Ok(line) = line else { break };
+                        if let Ok(event) = serde_json::from_str::<ServerEvent>(&line) {
+                            if let ServerEvent::InjectPrompt { text } = event {
+                                if write_tx_inject.send(text.into_bytes()).is_err() {
+                                    return;
+                                }
+                                std::thread::sleep(std::time::Duration::from_millis(50));
+                                if write_tx_inject.send(vec![b'\r']).is_err() {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Daemon disconnected — reconnect loop.
+                if !running_daemon.load(Ordering::Relaxed) {
+                    return;
+                }
+                eprintln!("agent-dash: daemon disconnected, reconnecting...");
+                let mut delay = std::time::Duration::from_secs(1);
+                let max_delay = std::time::Duration::from_secs(10);
+                loop {
+                    if !running_daemon.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    std::thread::sleep(delay);
+                    if let Some(new_conn) = try_connect_daemon() {
+                        // Re-register with metadata.
+                        let cwd = std::env::current_dir().ok();
+                        let branch =
+                            cwd.as_ref().map(|d| git_branch(d)).unwrap_or_default();
+                        let pname = cwd
+                            .as_ref()
+                            .and_then(|d| d.file_name())
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let req = ClientRequest::RegisterWrapper {
+                            session_id: session_id_daemon.clone(),
+                            agent: agent_name.clone(),
+                            cwd: cwd.map(|d| d.to_string_lossy().to_string()),
+                            branch: Some(branch),
+                            project_name: Some(pname),
+                            real_session_id: None,
+                        };
+                        if send_to_daemon(&new_conn, &req).is_ok() {
+                            eprintln!("agent-dash: reconnected to daemon");
+                            conn = new_conn;
                             break;
                         }
                     }
+                    delay = (delay * 2).min(max_delay);
                 }
             }
         });
@@ -284,6 +343,25 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
     } else {
         status.exit_code() as i32
     }
+}
+
+/// Extract git branch from a directory. Returns empty string on failure.
+fn git_branch(dir: &std::path::Path) -> String {
+    std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(dir)
+        .output()
+        .ok()
+        .and_then(|out| {
+            if out.status.success() {
+                String::from_utf8(out.stdout)
+                    .ok()
+                    .map(|s| s.trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
 }
 
 /// Try to connect to the daemon. Returns None if not running.
