@@ -1,6 +1,6 @@
 use agent_dash_core::paths;
 use agent_dash_core::protocol::{self, HookEnvelope, HookEvent, HookPermissionDecision, ServerEvent};
-use agent_dash_core::session::DashState;
+use agent_dash_core::session::{DashState, SessionStatus};
 use crate::client_listener::{self, ClientMessage};
 use crate::hook_listener;
 use crate::messages;
@@ -455,6 +455,11 @@ pub async fn run(web_port: u16) {
                             });
                             if let Some(prompt_tx) = prompt_tx {
                                 if prompt_tx.try_send(text).is_ok() {
+                                    // Immediately mark the wrapper session as Working so
+                                    // the UI shows "thinking..." while Claude processes
+                                    // the prompt (before the first ToolStart hook fires).
+                                    state.set_status(&session_id, SessionStatus::Working);
+                                    broadcast_state(&mut subscribers, &state);
                                     ServerEvent::PromptSent { session_id }
                                 } else {
                                     ServerEvent::Error {

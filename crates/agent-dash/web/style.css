@@ -62,9 +62,15 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   width: 8px; height: 8px; border-radius: 50%; display: inline-block;
 }
 .status-dot.working { background: var(--green); }
+.status-dot.working.thinking { animation: pulse 1.5s ease-in-out infinite; }
 .status-dot.needs_input { background: var(--yellow); }
 .status-dot.idle { background: var(--text-dim); }
 .status-dot.ended { background: var(--red); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
 
 .badge {
   font-size: 11px;

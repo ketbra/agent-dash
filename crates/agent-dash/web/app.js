@@ -118,8 +118,8 @@
         '<div class="session-project">' + escapeHtml(s.project_name) + subagentBadge + permBadge + '</div>' +
         '<div class="session-branch">' + escapeHtml(s.branch || '') + '</div>' +
         '<div class="session-meta">' +
-        '<span class="status-dot ' + (s.status || 'idle') + '"></span>' +
-        '<span style="font-size:11px;color:var(--text-dim)">' + escapeHtml(s.status || 'idle') + '</span>' +
+        '<span class="status-dot ' + (s.status || 'idle') + (s.status === 'working' && !s.active_tool ? ' thinking' : '') + '"></span>' +
+        '<span style="font-size:11px;color:var(--text-dim)">' + (s.status === 'working' && !s.active_tool ? 'thinking\u2026' : escapeHtml(s.status || 'idle')) + '</span>' +
         (s.active_tool ? ' <span style="font-size:11px;color:var(--text-dim)">\u2022 ' + escapeHtml(s.active_tool.name) + '</span>' : '') +
         '</div>';
 
