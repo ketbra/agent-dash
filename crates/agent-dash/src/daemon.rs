@@ -384,30 +384,42 @@ pub async fn run() {
                         text,
                         reply,
                     } => {
-                        // Try exact match first, then prefix match (user may
-                        // pass truncated session IDs from `sessions` output).
-                        let prompt_tx = wrapper_channels.get(&session_id).or_else(|| {
-                            let matches: Vec<_> = wrapper_channels
-                                .iter()
-                                .filter(|(k, _)| k.starts_with(&session_id))
-                                .collect();
-                            if matches.len() == 1 {
-                                Some(matches[0].1)
-                            } else {
-                                None
-                            }
-                        });
-                        let response = if let Some(prompt_tx) = prompt_tx {
-                            if prompt_tx.try_send(text).is_ok() {
-                                ServerEvent::PromptSent { session_id }
-                            } else {
-                                ServerEvent::Error {
-                                    message: "wrapper channel full or closed".into(),
-                                }
+                        // Check if the target is a subagent — reject prompt
+                        // injection to subagent sessions.
+                        let is_subagent = resolve_session_key(&session_id, &state)
+                            .and_then(|k| state.sessions.get(&k))
+                            .is_some_and(|s| !s.is_main && s.parent_wrapper_id.is_some());
+
+                        let response = if is_subagent {
+                            ServerEvent::Error {
+                                message: "cannot inject prompt into subagent".into(),
                             }
                         } else {
-                            ServerEvent::Error {
-                                message: "session is not wrapped".into(),
+                            // Try exact match first, then prefix match (user may
+                            // pass truncated session IDs from `sessions` output).
+                            let prompt_tx = wrapper_channels.get(&session_id).or_else(|| {
+                                let matches: Vec<_> = wrapper_channels
+                                    .iter()
+                                    .filter(|(k, _)| k.starts_with(&session_id))
+                                    .collect();
+                                if matches.len() == 1 {
+                                    Some(matches[0].1)
+                                } else {
+                                    None
+                                }
+                            });
+                            if let Some(prompt_tx) = prompt_tx {
+                                if prompt_tx.try_send(text).is_ok() {
+                                    ServerEvent::PromptSent { session_id }
+                                } else {
+                                    ServerEvent::Error {
+                                        message: "wrapper channel full or closed".into(),
+                                    }
+                                }
+                            } else {
+                                ServerEvent::Error {
+                                    message: "session is not wrapped".into(),
+                                }
                             }
                         };
                         let _ = reply.send(protocol::encode_line(&response).unwrap_or_default());
