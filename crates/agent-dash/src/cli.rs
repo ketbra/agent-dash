@@ -51,13 +51,19 @@ pub fn cmd_status() {
                     .as_ref()
                     .map(|t| format!(" [{}:{}]", t.name, truncate(&t.detail, 40)))
                     .unwrap_or_default();
+                let sub_info = if s.subagent_count > 0 {
+                    format!(" (+{} subagents)", s.subagent_count)
+                } else {
+                    String::new()
+                };
                 println!(
-                    "{:<12} {:<10} {:<10} {}{}",
+                    "{:<12} {:<10} {:<10} {}{}{}",
                     truncate(&s.project_name, 12),
                     s.branch,
                     s.status,
                     truncate(&s.session_id, 8),
                     tool_info,
+                    sub_info,
                 );
             }
             return;
