@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 
-pub async fn run() {
+pub async fn run(web_port: u16) {
     let hook_sock = paths::hook_socket_name();
     let client_sock = paths::client_socket_name();
     let state_path = paths::state_file_path();
@@ -30,7 +30,8 @@ pub async fn run() {
 
     // Spawn listeners
     tokio::spawn(hook_listener::run(hook_tx));
-    tokio::spawn(client_listener::run(client_tx));
+    tokio::spawn(client_listener::run(client_tx.clone()));
+    tokio::spawn(crate::web::run(web_port, client_tx));
 
     // Main loop state
     let mut state = DaemonState::new();

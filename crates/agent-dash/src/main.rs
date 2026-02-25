@@ -10,6 +10,7 @@ mod relay_connector;
 mod setup;
 mod state;
 mod watcher;
+mod web;
 mod wrapper;
 
 use clap::{Parser, Subcommand};
@@ -119,7 +120,11 @@ enum Commands {
 #[derive(Debug, Subcommand)]
 enum DaemonAction {
     /// Start the daemon
-    Start,
+    Start {
+        /// Port for web interface (0 to disable)
+        #[arg(long, default_value = "3131")]
+        web_port: u16,
+    },
     /// Stop the daemon
     Stop,
     /// Show daemon status
@@ -159,8 +164,8 @@ async fn main() {
             std::process::exit(exit_code);
         }
         Some(Commands::Daemon { action }) => match action {
-            DaemonAction::Start => {
-                daemon::run().await;
+            DaemonAction::Start { web_port } => {
+                daemon::run(web_port).await;
             }
             DaemonAction::Stop => println!("daemon stop: not yet implemented"),
             DaemonAction::Status => println!("daemon status: not yet implemented"),
