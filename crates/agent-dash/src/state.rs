@@ -9,7 +9,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Debug, Clone)]
 pub struct InternalSession {
     pub session_id: String,
-    pub pid: Option<u32>,
     pub cwd: Option<String>,
     pub project_name: String,
     pub branch: String,
@@ -20,7 +19,8 @@ pub struct InternalSession {
     pub has_pending_question: bool,
     pub question_text: Option<String>,
     pub watch_offset: Option<u64>,
-    pub wrapped: bool,
+    pub is_main: bool,
+    pub parent_wrapper_id: Option<String>,
     pub agent: Option<String>,
 }
 
@@ -62,7 +62,6 @@ impl DaemonState {
             .entry(session_id.to_string())
             .or_insert_with(|| InternalSession {
                 session_id: session_id.to_string(),
-                pid: None,
                 cwd: None,
                 project_name: String::new(),
                 branch: String::new(),
@@ -73,7 +72,8 @@ impl DaemonState {
                 has_pending_question: false,
                 question_text: None,
                 watch_offset: None,
-                wrapped: false,
+                is_main: false,
+                parent_wrapper_id: None,
                 agent: None,
             });
     }
@@ -322,6 +322,15 @@ mod tests {
 
         state.resolve_permission("tu1");
         assert!(!state.pending_permissions.contains_key("tu1"));
+    }
+
+    #[test]
+    fn ensure_session_defaults_not_main() {
+        let mut state = DaemonState::new();
+        state.ensure_session("s1");
+        let session = state.sessions.get("s1").unwrap();
+        assert!(!session.is_main);
+        assert!(session.parent_wrapper_id.is_none());
     }
 
     #[test]

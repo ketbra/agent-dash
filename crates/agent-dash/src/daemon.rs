@@ -74,11 +74,9 @@ pub async fn run() {
                             wrapper_channels.insert(hook_session_id.clone(), prompt_tx.clone());
                         }
                     }
-                    // Mark the real session as wrapped.
+                    // Ensure the real session exists (but do NOT mark as
+                    // is_main — subagent hooks should not promote to main).
                     state.ensure_session(hook_session_id);
-                    if let Some(session) = state.sessions.get_mut(hook_session_id) {
-                        session.wrapped = true;
-                    }
                 }
 
                 // Check if a ToolStart or Stop resolves a pending permission
@@ -330,7 +328,7 @@ pub async fn run() {
                     } => {
                         state.ensure_session(&session_id);
                         if let Some(session) = state.sessions.get_mut(&session_id) {
-                            session.wrapped = true;
+                            session.is_main = true;
                             session.agent = Some(agent);
                         }
                         wrapper_channels.insert(session_id, prompt_tx);
@@ -340,7 +338,7 @@ pub async fn run() {
                     ClientMessage::UnregisterWrapper { session_id } => {
                         wrapper_channels.remove(&session_id);
                         if let Some(session) = state.sessions.get_mut(&session_id) {
-                            session.wrapped = false;
+                            session.is_main = false;
                             session.agent = None;
                         }
                         state_dirty = true;
@@ -401,7 +399,7 @@ pub async fn run() {
                 for (slug, group) in &mut slug_groups {
                     // Sort by PID for a stable representative.
                     group.sort_by_key(|(pid, _)| *pid);
-                    let (representative_pid, proc_info) = group[0];
+                    let (_representative_pid, proc_info) = group[0];
                     let project_name = paths::project_name_from_cwd(&proc_info.cwd);
 
                     // Look up JSONL once per slug, not per PID.
@@ -428,7 +426,6 @@ pub async fn run() {
                     active_session_ids.insert(session_id.clone());
                     state.ensure_session(&session_id);
                     if let Some(session) = state.sessions.get_mut(&session_id) {
-                        session.pid = Some(representative_pid);
                         session.cwd = Some(proc_info.cwd.to_string_lossy().to_string());
                         session.project_name = project_name;
                         session.branch = branch;
@@ -451,11 +448,8 @@ pub async fn run() {
                     if active_session_ids.contains(id) {
                         return true;
                     }
-                    // Hook-only sessions have no PID; keep if recently active.
-                    if session.pid.is_none() {
-                        return now_secs.saturating_sub(session.last_status_change) < 300;
-                    }
-                    false
+                    // Keep sessions not found by scanner if recently active.
+                    now_secs.saturating_sub(session.last_status_change) < 300
                 });
 
                 state_dirty = true;
@@ -612,7 +606,6 @@ mod tests {
     fn make_session(id: &str) -> InternalSession {
         InternalSession {
             session_id: id.to_string(),
-            pid: None,
             cwd: None,
             project_name: String::new(),
             branch: String::new(),
@@ -623,7 +616,8 @@ mod tests {
             has_pending_question: false,
             question_text: None,
             watch_offset: None,
-            wrapped: false,
+            is_main: false,
+            parent_wrapper_id: None,
             agent: None,
         }
     }
