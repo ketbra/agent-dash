@@ -296,7 +296,7 @@ pub async fn run() {
                                 // Skip JSONL files that have no parseable
                                 // conversation content (e.g. metadata-only
                                 // files with just file-history-snapshot).
-                                let Some(status) = scanner::parse_jsonl_status(&path) else {
+                                let Some(status) = crate::jsonl::parse_jsonl_status(&path) else {
                                     continue;
                                 };
                                 let session_id = status.session_id;

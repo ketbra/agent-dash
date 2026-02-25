@@ -4,6 +4,7 @@ mod client_listener;
 mod daemon;
 mod hook_cmd;
 mod hook_listener;
+mod jsonl;
 mod messages;
 mod relay_connector;
 mod scanner;
