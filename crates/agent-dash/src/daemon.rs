@@ -74,6 +74,13 @@ pub async fn run() {
                     // Ensure the real session exists (but do NOT mark as
                     // is_main — subagent hooks should not promote to main).
                     state.ensure_session(hook_session_id);
+                    if let Some(session) = state.sessions.get_mut(hook_session_id) {
+                        // If hook_session_id matches wrapper_id, it's the main session.
+                        // If it doesn't match and isn't already main, it's a subagent.
+                        if hook_session_id != wid && !session.is_main {
+                            session.parent_wrapper_id = Some(wid.clone());
+                        }
+                    }
                 }
 
                 // Check if a ToolStart or Stop resolves a pending permission
@@ -326,14 +333,35 @@ pub async fn run() {
                     ClientMessage::RegisterWrapper {
                         session_id,
                         agent,
+                        cwd,
+                        branch,
+                        project_name,
+                        real_session_id,
                         prompt_tx,
                     } => {
                         state.ensure_session(&session_id);
                         if let Some(session) = state.sessions.get_mut(&session_id) {
                             session.is_main = true;
                             session.agent = Some(agent);
+                            if let Some(ref c) = cwd {
+                                session.cwd = Some(c.clone());
+                            }
+                            if let Some(ref b) = branch {
+                                session.branch = b.clone();
+                            }
+                            if let Some(ref p) = project_name {
+                                session.project_name = p.clone();
+                            }
                         }
-                        wrapper_channels.insert(session_id, prompt_tx);
+                        wrapper_channels.insert(session_id.clone(), prompt_tx);
+
+                        // On reconnect, re-link the real session_id to this wrapper's channel.
+                        if let Some(ref real_id) = real_session_id {
+                            if let Some(tx) = wrapper_channels.get(&session_id) {
+                                wrapper_channels.insert(real_id.clone(), tx.clone());
+                            }
+                        }
+
                         state_dirty = true;
                         broadcast_state(&mut subscribers, &state);
                     }

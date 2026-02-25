@@ -60,6 +60,10 @@ pub enum ClientMessage {
     RegisterWrapper {
         session_id: String,
         agent: String,
+        cwd: Option<String>,
+        branch: Option<String>,
+        project_name: Option<String>,
+        real_session_id: Option<String>,
         prompt_tx: mpsc::Sender<String>,
     },
     /// Wrapper unregistering.
@@ -273,13 +277,17 @@ async fn handle_client_connection(
                     let _ = writer.write_all(json.as_bytes()).await;
                 }
             }
-            ClientRequest::RegisterWrapper { session_id, agent, .. } => {
+            ClientRequest::RegisterWrapper { session_id, agent, cwd, branch, project_name, real_session_id } => {
                 // Create a channel for prompt injection.
                 let (prompt_tx, mut prompt_rx) = mpsc::channel::<String>(16);
                 let _ = tx
                     .send(ClientMessage::RegisterWrapper {
                         session_id: session_id.clone(),
                         agent,
+                        cwd,
+                        branch,
+                        project_name,
+                        real_session_id,
                         prompt_tx,
                     })
                     .await;
