@@ -367,10 +367,15 @@ pub async fn run() {
                     }
                     ClientMessage::UnregisterWrapper { session_id } => {
                         wrapper_channels.remove(&session_id);
-                        if let Some(session) = state.sessions.get_mut(&session_id) {
-                            session.is_main = false;
-                            session.agent = None;
+                        // Also remove channels for subagents of this wrapper.
+                        let sub_ids: Vec<String> = state.sessions.iter()
+                            .filter(|(_, s)| s.parent_wrapper_id.as_deref() == Some(&session_id))
+                            .map(|(id, _)| id.clone())
+                            .collect();
+                        for id in &sub_ids {
+                            wrapper_channels.remove(id);
                         }
+                        state.remove_wrapper(&session_id);
                         state_dirty = true;
                         broadcast_state(&mut subscribers, &state);
                     }

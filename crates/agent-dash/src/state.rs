@@ -185,6 +185,26 @@ impl DaemonState {
         Some(perm)
     }
 
+    /// Remove a wrapper session and all its subagent sessions.
+    /// Also cleans up pending permissions for removed sessions.
+    pub fn remove_wrapper(&mut self, wrapper_id: &str) {
+        let to_remove: Vec<String> = self
+            .sessions
+            .iter()
+            .filter(|(id, s)| {
+                *id == wrapper_id
+                    || s.parent_wrapper_id.as_deref() == Some(wrapper_id)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+
+        for id in &to_remove {
+            self.sessions.remove(id);
+            self.pending_permissions
+                .retain(|_, perm| perm.session_id != *id);
+        }
+    }
+
     /// Convert main sessions to the serializable `DashSession` form.
     /// Subagents are excluded; their count is included on the parent.
     pub fn to_dash_sessions(&self) -> Vec<DashSession> {
@@ -404,5 +424,31 @@ mod tests {
 
         let dash = state.to_all_dash_sessions();
         assert_eq!(dash.len(), 2);
+    }
+
+    #[test]
+    fn remove_wrapper_cleans_up_subagents() {
+        let mut state = DaemonState::new();
+
+        // Main session.
+        state.ensure_session("wrap-1");
+        state.sessions.get_mut("wrap-1").unwrap().is_main = true;
+
+        // Two subagents.
+        state.ensure_session("sub-a");
+        state.sessions.get_mut("sub-a").unwrap().parent_wrapper_id = Some("wrap-1".into());
+        state.ensure_session("sub-b");
+        state.sessions.get_mut("sub-b").unwrap().parent_wrapper_id = Some("wrap-1".into());
+
+        // Unrelated session.
+        state.ensure_session("wrap-2");
+        state.sessions.get_mut("wrap-2").unwrap().is_main = true;
+
+        state.remove_wrapper("wrap-1");
+
+        assert!(!state.sessions.contains_key("wrap-1"));
+        assert!(!state.sessions.contains_key("sub-a"));
+        assert!(!state.sessions.contains_key("sub-b"));
+        assert!(state.sessions.contains_key("wrap-2"));
     }
 }
