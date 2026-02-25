@@ -141,9 +141,14 @@ pub async fn run() {
                         }
                         subscribers.push(tx);
                     }
-                    ClientMessage::GetState { include_subagents: _, reply } => {
+                    ClientMessage::GetState { include_subagents, reply } => {
+                        let sessions = if include_subagents {
+                            state.to_all_dash_sessions()
+                        } else {
+                            state.to_dash_sessions()
+                        };
                         let event = ServerEvent::StateUpdate {
-                            sessions: state.to_dash_sessions(),
+                            sessions,
                         };
                         if let Ok(json) = protocol::encode_line(&event) {
                             let _ = reply.send(json);

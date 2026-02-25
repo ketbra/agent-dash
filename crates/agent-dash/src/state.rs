@@ -185,11 +185,30 @@ impl DaemonState {
         Some(perm)
     }
 
-    /// Convert all sessions to the serializable `DashSession` form.
+    /// Convert main sessions to the serializable `DashSession` form.
+    /// Subagents are excluded; their count is included on the parent.
     pub fn to_dash_sessions(&self) -> Vec<DashSession> {
+        self.build_dash_sessions(false)
+    }
+
+    /// Convert ALL sessions (including subagents) to `DashSession` form.
+    pub fn to_all_dash_sessions(&self) -> Vec<DashSession> {
+        self.build_dash_sessions(true)
+    }
+
+    fn build_dash_sessions(&self, include_subagents: bool) -> Vec<DashSession> {
+        // Count subagents per parent wrapper.
+        let mut subagent_counts: HashMap<String, usize> = HashMap::new();
+        for s in self.sessions.values() {
+            if let Some(ref parent) = s.parent_wrapper_id {
+                *subagent_counts.entry(parent.clone()).or_default() += 1;
+            }
+        }
+
         let mut sessions: Vec<DashSession> = self
             .sessions
             .values()
+            .filter(|s| include_subagents || s.is_main)
             .map(|s| {
                 // Determine input_reason from pending permissions or pending question.
                 let input_reason = if s.has_pending_question {
@@ -222,6 +241,8 @@ impl DaemonState {
                     }
                 });
 
+                let subagent_count = subagent_counts.get(&s.session_id).copied().unwrap_or(0);
+
                 DashSession {
                     session_id: s.session_id.clone(),
                     project_name: s.project_name.clone(),
@@ -231,7 +252,7 @@ impl DaemonState {
                     jsonl_path: s.jsonl_path.clone(),
                     input_reason,
                     active_tool,
-                    subagent_count: 0,
+                    subagent_count,
                 }
             })
             .collect();
@@ -337,8 +358,51 @@ mod tests {
     fn to_dash_sessions_returns_all() {
         let mut state = DaemonState::new();
         state.ensure_session("s1");
+        state.sessions.get_mut("s1").unwrap().is_main = true;
         state.ensure_session("s2");
+        state.sessions.get_mut("s2").unwrap().is_main = true;
         let dash = state.to_dash_sessions();
+        assert_eq!(dash.len(), 2);
+    }
+
+    #[test]
+    fn to_dash_sessions_filters_subagents() {
+        let mut state = DaemonState::new();
+        state.ensure_session("main-1");
+        state.sessions.get_mut("main-1").unwrap().is_main = true;
+        state.sessions.get_mut("main-1").unwrap().project_name = "proj".into();
+        state.ensure_session("sub-1");
+        state.sessions.get_mut("sub-1").unwrap().parent_wrapper_id = Some("main-1".into());
+
+        let dash = state.to_dash_sessions();
+        assert_eq!(dash.len(), 1);
+        assert_eq!(dash[0].session_id, "main-1");
+    }
+
+    #[test]
+    fn to_dash_sessions_counts_subagents() {
+        let mut state = DaemonState::new();
+        state.ensure_session("main-1");
+        state.sessions.get_mut("main-1").unwrap().is_main = true;
+        state.ensure_session("sub-1");
+        state.sessions.get_mut("sub-1").unwrap().parent_wrapper_id = Some("main-1".into());
+        state.ensure_session("sub-2");
+        state.sessions.get_mut("sub-2").unwrap().parent_wrapper_id = Some("main-1".into());
+
+        let dash = state.to_dash_sessions();
+        assert_eq!(dash.len(), 1);
+        assert_eq!(dash[0].subagent_count, 2);
+    }
+
+    #[test]
+    fn to_all_dash_sessions_includes_subagents() {
+        let mut state = DaemonState::new();
+        state.ensure_session("main-1");
+        state.sessions.get_mut("main-1").unwrap().is_main = true;
+        state.ensure_session("sub-1");
+        state.sessions.get_mut("sub-1").unwrap().parent_wrapper_id = Some("main-1".into());
+
+        let dash = state.to_all_dash_sessions();
         assert_eq!(dash.len(), 2);
     }
 }
