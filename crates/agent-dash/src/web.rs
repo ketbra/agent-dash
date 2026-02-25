@@ -172,12 +172,13 @@ async fn handle_ws(socket: WebSocket, client_tx: mpsc::Sender<ClientMessage>) {
                     .send(ClientMessage::UnwatchSession { session_id })
                     .await;
             }
-            ClientRequest::SendPrompt { session_id, text } => {
+            ClientRequest::SendPrompt { session_id, text, images } => {
                 let (reply_tx, reply_rx) = oneshot::channel();
                 let _ = client_tx_clone
                     .send(ClientMessage::SendPrompt {
                         session_id,
                         text,
+                        images,
                         reply: reply_tx,
                     })
                     .await;

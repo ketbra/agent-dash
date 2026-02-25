@@ -1,5 +1,5 @@
 use agent_dash_core::paths;
-use agent_dash_core::protocol::{self, ClientRequest, HookPermissionDecision, ServerEvent};
+use agent_dash_core::protocol::{self, ClientRequest, HookPermissionDecision, ImageAttachment, ServerEvent};
 use interprocess::local_socket::{
     tokio::prelude::*,
     GenericFilePath, ListenerOptions,
@@ -74,6 +74,7 @@ pub enum ClientMessage {
     SendPrompt {
         session_id: String,
         text: String,
+        images: Vec<ImageAttachment>,
         reply: oneshot::Sender<String>,
     },
 }
@@ -340,12 +341,13 @@ async fn handle_client_connection(
                     .send(ClientMessage::UnregisterWrapper { session_id })
                     .await;
             }
-            ClientRequest::SendPrompt { session_id, text } => {
+            ClientRequest::SendPrompt { session_id, text, images } => {
                 let (reply_tx, reply_rx) = oneshot::channel();
                 let _ = tx
                     .send(ClientMessage::SendPrompt {
                         session_id,
                         text,
+                        images,
                         reply: reply_tx,
                     })
                     .await;

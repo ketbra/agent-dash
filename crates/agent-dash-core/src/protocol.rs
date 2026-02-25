@@ -45,6 +45,16 @@ pub struct HookEnvelope {
 }
 
 // ---------------------------------------------------------------------------
+// Image attachment (for prompt injection with images)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageAttachment {
+    pub mime_type: String,
+    pub data: String, // base64-encoded
+}
+
+// ---------------------------------------------------------------------------
 // Client requests (client -> daemon, via daemon.sock)
 // ---------------------------------------------------------------------------
 
@@ -118,6 +128,8 @@ pub enum ClientRequest {
     SendPrompt {
         session_id: String,
         text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<ImageAttachment>,
     },
 }
 
@@ -591,9 +603,23 @@ mod tests {
         let json = r#"{"method":"send_prompt","session_id":"s1","text":"fix the tests"}"#;
         let req: ClientRequest = serde_json::from_str(json).unwrap();
         match req {
-            ClientRequest::SendPrompt { session_id, text } => {
+            ClientRequest::SendPrompt { session_id, text, images } => {
                 assert_eq!(session_id, "s1");
                 assert_eq!(text, "fix the tests");
+                assert!(images.is_empty());
+            }
+            _ => panic!("expected SendPrompt"),
+        }
+    }
+
+    #[test]
+    fn deserialize_send_prompt_with_images() {
+        let json = r#"{"method":"send_prompt","session_id":"s1","text":"look at this","images":[{"mime_type":"image/png","data":"iVBOR..."}]}"#;
+        let req: ClientRequest = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequest::SendPrompt { images, .. } => {
+                assert_eq!(images.len(), 1);
+                assert_eq!(images[0].mime_type, "image/png");
             }
             _ => panic!("expected SendPrompt"),
         }

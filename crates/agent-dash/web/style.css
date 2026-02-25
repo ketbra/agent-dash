@@ -112,9 +112,14 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 
 #prompt-form {
   display: flex;
+  flex-direction: column;
   padding: 12px 24px;
   border-top: 1px solid var(--border);
   background: var(--bg-sidebar);
+}
+
+#prompt-row {
+  display: flex;
 }
 
 #prompt-input {
@@ -143,6 +148,44 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 }
 
 #prompt-form button:hover { opacity: 0.9; }
+
+#image-previews {
+  display: flex;
+  gap: 8px;
+  padding-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.image-preview-item {
+  position: relative;
+  width: 64px;
+  height: 64px;
+}
+
+.image-preview-item img {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.image-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--red);
+  color: var(--bg);
+  border: none;
+  font-size: 12px;
+  line-height: 18px;
+  text-align: center;
+  cursor: pointer;
+  padding: 0;
+}
 
 #permission-banner {
   padding: 12px 24px;

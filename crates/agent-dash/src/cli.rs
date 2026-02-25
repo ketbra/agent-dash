@@ -248,6 +248,7 @@ pub fn cmd_inject(session_id: &str, text: &str) {
     let req = ClientRequest::SendPrompt {
         session_id: session_id.to_string(),
         text: text.to_string(),
+        images: vec![],
     };
     send_request(&mut conn, &req);
 

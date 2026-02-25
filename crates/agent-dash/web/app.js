@@ -7,6 +7,7 @@
   let sessions = [];
   let selectedSessionId = null;
   let pendingPermissions = {}; // session_id -> permission info
+  let pendingImages = []; // [{mime_type, data, dataUrl}]
 
   // --- DOM refs ---
   const sessionList = document.getElementById('session-list');
@@ -14,6 +15,7 @@
   const promptForm = document.getElementById('prompt-form');
   const promptInput = document.getElementById('prompt-input');
   const permBanner = document.getElementById('permission-banner');
+  const imagePreviewsEl = document.getElementById('image-previews');
 
   // --- WebSocket ---
   function connect() {
@@ -192,13 +194,76 @@
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
+  // --- Image paste handling ---
+  document.addEventListener('paste', function (e) {
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image/') === 0) {
+        e.preventDefault();
+        const file = items[i].getAsFile();
+        if (!file) continue;
+        const reader = new FileReader();
+        reader.onload = function () {
+          const dataUrl = reader.result;
+          // dataUrl = "data:image/png;base64,iVBOR..."
+          const commaIdx = dataUrl.indexOf(',');
+          const meta = dataUrl.substring(0, commaIdx); // "data:image/png;base64"
+          const mime_type = meta.split(':')[1].split(';')[0];
+          const data = dataUrl.substring(commaIdx + 1);
+          pendingImages.push({ mime_type: mime_type, data: data, dataUrl: dataUrl });
+          renderImagePreviews();
+        };
+        reader.readAsDataURL(file);
+      }
+    }
+  });
+
+  function renderImagePreviews() {
+    imagePreviewsEl.innerHTML = '';
+    if (pendingImages.length === 0) {
+      imagePreviewsEl.classList.add('hidden');
+      return;
+    }
+    imagePreviewsEl.classList.remove('hidden');
+    pendingImages.forEach(function (img, idx) {
+      const item = document.createElement('div');
+      item.className = 'image-preview-item';
+
+      const imgEl = document.createElement('img');
+      imgEl.src = img.dataUrl;
+      item.appendChild(imgEl);
+
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'image-remove';
+      removeBtn.textContent = '\u00d7';
+      removeBtn.onclick = function () {
+        pendingImages.splice(idx, 1);
+        renderImagePreviews();
+      };
+      item.appendChild(removeBtn);
+
+      imagePreviewsEl.appendChild(item);
+    });
+  }
+
   // --- Prompt injection ---
   promptForm.onsubmit = function (e) {
     e.preventDefault();
     const text = promptInput.value.trim();
-    if (!text || !selectedSessionId) return;
-    send({ method: 'send_prompt', session_id: selectedSessionId, text: text });
+    if (!text && pendingImages.length === 0) return;
+    if (!selectedSessionId) return;
+
+    const msg = { method: 'send_prompt', session_id: selectedSessionId, text: text };
+    if (pendingImages.length > 0) {
+      msg.images = pendingImages.map(function (img) {
+        return { mime_type: img.mime_type, data: img.data };
+      });
+    }
+    send(msg);
     promptInput.value = '';
+    pendingImages = [];
+    renderImagePreviews();
   };
 
   // --- Permission UI ---

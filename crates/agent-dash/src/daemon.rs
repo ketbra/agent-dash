@@ -1,6 +1,7 @@
 use agent_dash_core::paths;
-use agent_dash_core::protocol::{self, HookEnvelope, HookEvent, HookPermissionDecision, ServerEvent};
+use agent_dash_core::protocol::{self, HookEnvelope, HookEvent, HookPermissionDecision, ImageAttachment, ServerEvent};
 use agent_dash_core::session::{DashState, SessionStatus};
+use base64::Engine as _;
 use crate::client_listener::{self, ClientMessage};
 use crate::hook_listener;
 use crate::messages;
@@ -427,8 +428,35 @@ pub async fn run(web_port: u16) {
                     ClientMessage::SendPrompt {
                         session_id,
                         text,
+                        images,
                         reply,
                     } => {
+                        // Save any attached images and augment the prompt text.
+                        let text = if images.is_empty() {
+                            text
+                        } else {
+                            match save_images_to_temp(&images) {
+                                Ok(paths) => {
+                                    let mut augmented = text;
+                                    augmented.push_str("\n\nAttached images (use the Read tool to view them):");
+                                    for p in &paths {
+                                        augmented.push_str("\n- ");
+                                        augmented.push_str(p);
+                                    }
+                                    augmented
+                                }
+                                Err(e) => {
+                                    let _ = reply.send(
+                                        protocol::encode_line(&ServerEvent::Error {
+                                            message: format!("failed to save images: {e}"),
+                                        })
+                                        .unwrap_or_default(),
+                                    );
+                                    continue;
+                                }
+                            }
+                        };
+
                         // Check if the target is a subagent — reject prompt
                         // injection to subagent sessions.
                         let is_subagent = resolve_session_key(&session_id, &state)
@@ -757,6 +785,39 @@ mod tests {
         let result = resolve_jsonl_path("nonexistent-id-xyz-99999", &state);
         assert_eq!(result, None);
     }
+}
+
+/// Save base64-encoded images to temporary files and return their paths.
+fn save_images_to_temp(images: &[ImageAttachment]) -> Result<Vec<String>, std::io::Error> {
+    let dir = std::path::Path::new("/tmp/agent-dash-images");
+    std::fs::create_dir_all(dir)?;
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let engine = base64::engine::general_purpose::STANDARD;
+    let mut paths = Vec::with_capacity(images.len());
+
+    for (i, img) in images.iter().enumerate() {
+        let ext = match img.mime_type.as_str() {
+            "image/png" => "png",
+            "image/jpeg" => "jpg",
+            "image/gif" => "gif",
+            "image/webp" => "webp",
+            _ => "png",
+        };
+        let filename = format!("img-{ts}-{i}.{ext}");
+        let path = dir.join(&filename);
+        let data = engine
+            .decode(&img.data)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        std::fs::write(&path, &data)?;
+        paths.push(path.to_string_lossy().to_string());
+    }
+
+    Ok(paths)
 }
 
 /// Atomically write state.json (write to .tmp then rename).
