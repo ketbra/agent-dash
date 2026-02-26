@@ -25,6 +25,10 @@ pub async fn run(web_port: u16) {
     let cache = paths::cache_dir();
     let _ = std::fs::create_dir_all(&cache);
 
+    // Write PID file so `daemon stop` and `daemon status` can find us.
+    let pid_path = paths::pid_file_path();
+    let _ = std::fs::write(&pid_path, std::process::id().to_string());
+
     // Channels
     let (hook_tx, mut hook_rx) = mpsc::channel::<HookEnvelope>(256);
     let (client_tx, mut client_rx) = mpsc::channel::<ClientMessage>(256);

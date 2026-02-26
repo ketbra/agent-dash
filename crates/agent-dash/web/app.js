@@ -235,6 +235,7 @@
       item.appendChild(imgEl);
 
       const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
       removeBtn.className = 'image-remove';
       removeBtn.textContent = '\u00d7';
       removeBtn.onclick = function () {
@@ -260,10 +261,12 @@
         return { mime_type: img.mime_type, data: img.data };
       });
     }
-    send(msg);
+    // Clear UI state before sending — ws.send() with large base64
+    // payloads can throw, which would skip cleanup.
     promptInput.value = '';
     pendingImages = [];
     renderImagePreviews();
+    send(msg);
   };
 
   // --- Permission UI ---

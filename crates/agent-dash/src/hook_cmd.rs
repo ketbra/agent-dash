@@ -212,9 +212,9 @@ fn extract_tool_detail(input: &serde_json::Value, tool_name: &str) -> String {
                 .and_then(|ti| ti.get("command"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            // Truncate to 200 characters (char-boundary safe).
-            if cmd.chars().count() > 200 {
-                cmd.chars().take(200).collect()
+            // Truncate to 500 characters (char-boundary safe).
+            if cmd.chars().count() > 500 {
+                cmd.chars().take(500).collect()
             } else {
                 cmd.to_string()
             }
@@ -368,13 +368,13 @@ mod tests {
 
     #[test]
     fn extract_tool_detail_bash_truncates() {
-        let long_cmd = "x".repeat(300);
+        let long_cmd = "x".repeat(600);
         let input = serde_json::json!({
             "tool_name": "Bash",
             "tool_input": {"command": long_cmd}
         });
         let detail = extract_tool_detail(&input, "Bash");
-        assert_eq!(detail.len(), 200);
+        assert_eq!(detail.len(), 500);
     }
 
     #[test]

@@ -24,6 +24,11 @@ pub fn state_file_path() -> PathBuf {
     cache_dir().join("state.json")
 }
 
+/// Path to the daemon PID file.
+pub fn pid_file_path() -> PathBuf {
+    cache_dir().join("daemon.pid")
+}
+
 /// Convert a CWD path to a Claude project slug.
 /// e.g., /home/user/src/project -> -home-user-src-project
 pub fn cwd_to_project_slug(cwd: &Path) -> String {

@@ -26,6 +26,7 @@ dependencies = [
  "dirs",
  "futures-util",
  "interprocess",
+ "libc",
  "notify",
  "portable-pty",
  "qrcode",

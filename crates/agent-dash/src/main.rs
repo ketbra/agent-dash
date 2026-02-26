@@ -167,8 +167,58 @@ async fn main() {
             DaemonAction::Start { web_port } => {
                 daemon::run(web_port).await;
             }
-            DaemonAction::Stop => println!("daemon stop: not yet implemented"),
-            DaemonAction::Status => println!("daemon status: not yet implemented"),
+            DaemonAction::Stop => {
+                let pid_path = agent_dash_core::paths::pid_file_path();
+                match std::fs::read_to_string(&pid_path) {
+                    Ok(contents) => match contents.trim().parse::<i32>() {
+                        Ok(pid) => {
+                            // Check if process is alive before sending signal.
+                            unsafe {
+                                if libc::kill(pid, 0) == 0 {
+                                    libc::kill(pid, libc::SIGTERM);
+                                    println!("Sent SIGTERM to daemon (PID {pid})");
+                                    let _ = std::fs::remove_file(&pid_path);
+                                } else {
+                                    println!("Daemon not running (stale PID file)");
+                                    let _ = std::fs::remove_file(&pid_path);
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            eprintln!("Invalid PID file: {}", pid_path.display());
+                            std::process::exit(1);
+                        }
+                    },
+                    Err(_) => {
+                        println!("Daemon is not running (no PID file)");
+                    }
+                }
+            }
+            DaemonAction::Status => {
+                let pid_path = agent_dash_core::paths::pid_file_path();
+                let socket_path = agent_dash_core::paths::client_socket_name();
+                match std::fs::read_to_string(&pid_path) {
+                    Ok(contents) => match contents.trim().parse::<i32>() {
+                        Ok(pid) => {
+                            let alive = unsafe { libc::kill(pid, 0) == 0 };
+                            if alive {
+                                println!("Daemon is running (PID {pid})");
+                                println!("  socket: {socket_path}");
+                            } else {
+                                println!("Daemon is not running (stale PID file for {pid})");
+                                let _ = std::fs::remove_file(&pid_path);
+                            }
+                        }
+                        Err(_) => {
+                            eprintln!("Invalid PID file: {}", pid_path.display());
+                            std::process::exit(1);
+                        }
+                    },
+                    Err(_) => {
+                        println!("Daemon is not running (no PID file)");
+                    }
+                }
+            }
         },
         Some(Commands::Status) | None => cli::cmd_status(),
         Some(Commands::Messages { session_id, format, limit }) => {
