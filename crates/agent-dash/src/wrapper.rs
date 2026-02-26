@@ -121,6 +121,23 @@ fn detect_suggestion(screen: &vt100::Screen) -> Option<String> {
 /// Claude Code displays a line like "· Pouncing… (thinking)" while processing.
 /// We scan rows bottom-up for a line starting with `·` (U+00B7 middle dot) or
 /// `•` (U+2022 bullet), and extract the full line text.
+/// Characters used in Claude Code's animated spinner.
+/// Two variants exist (Ghostty vs default terminal) plus a reduced-motion
+/// fallback; we match the union of all possible spinner frame characters.
+fn is_spinner_char(s: &str) -> bool {
+    matches!(
+        s,
+        "·"  // U+00B7 Middle Dot
+        | "✢" // U+2722 Four Teardrop-Spoked Asterisk
+        | "*"  // U+002A Asterisk
+        | "✳" // U+2733 Eight Spoked Asterisk (Ghostty)
+        | "✶" // U+2736 Six Pointed Black Star
+        | "✻" // U+273B Teardrop-Spoked Asterisk
+        | "✽" // U+273D Heavy Teardrop-Spoked Asterisk
+        | "●" // U+25CF Black Circle (reduced motion)
+    )
+}
+
 fn detect_thinking_text(screen: &vt100::Screen) -> Option<String> {
     if screen.alternate_screen() {
         return None;
@@ -134,11 +151,11 @@ fn detect_thinking_text(screen: &vt100::Screen) -> Option<String> {
             continue;
         };
         let first_char = cell.contents();
-        if first_char != "·" && first_char != "•" {
+        if !is_spinner_char(first_char) {
             continue;
         }
 
-        // Found a row starting with a middle dot / bullet — extract the full line.
+        // Found a row starting with a spinner character — extract the full line.
         let mut text = String::new();
         for c in 0..width {
             let Some(cell) = screen.cell(r, c) else {
@@ -711,9 +728,27 @@ mod tests {
     }
 
     #[test]
-    fn detect_thinking_bullet() {
-        let result = thinking_from("• Working\u{2026} (thinking)".as_bytes());
-        assert_eq!(result, Some("• Working\u{2026} (thinking)".to_string()));
+    fn detect_thinking_asterisk() {
+        let result = thinking_from("* Garnishing\u{2026} (1m 30s)".as_bytes());
+        assert_eq!(result, Some("* Garnishing\u{2026} (1m 30s)".to_string()));
+    }
+
+    #[test]
+    fn detect_thinking_star() {
+        let result = thinking_from("\u{2736} Working\u{2026}".as_bytes());
+        assert_eq!(result, Some("\u{2736} Working\u{2026}".to_string()));
+    }
+
+    #[test]
+    fn detect_thinking_teardrop() {
+        let result = thinking_from("\u{2722} Thinking\u{2026}".as_bytes());
+        assert_eq!(result, Some("\u{2722} Thinking\u{2026}".to_string()));
+    }
+
+    #[test]
+    fn detect_thinking_reduced_motion() {
+        let result = thinking_from("\u{25CF} Working\u{2026}".as_bytes());
+        assert_eq!(result, Some("\u{25CF} Working\u{2026}".to_string()));
     }
 
     #[test]
