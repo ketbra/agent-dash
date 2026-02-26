@@ -169,7 +169,10 @@ fn detect_thinking_text(screen: &vt100::Screen) -> Option<String> {
             text.push_str(ch);
         }
         let trimmed = text.trim();
-        if !trimmed.is_empty() {
+        // The thinking status line always contains "…" (U+2026) as part of
+        // the active form (e.g. "Garnishing…").  Completed response lines
+        // also start with a spinner char (● green dot) but lack the ellipsis.
+        if !trimmed.is_empty() && trimmed.contains('\u{2026}') {
             return Some(trimmed.to_string());
         }
     }
@@ -792,6 +795,13 @@ mod tests {
     fn detect_thinking_reduced_motion() {
         let result = thinking_from("\u{25CF} Working\u{2026}".as_bytes());
         assert_eq!(result, Some("\u{25CF} Working\u{2026}".to_string()));
+    }
+
+    #[test]
+    fn no_thinking_on_completed_response() {
+        // Completed response lines start with ● but lack the ellipsis.
+        let result = thinking_from("● Pushed both commits to origin/main.".as_bytes());
+        assert_eq!(result, None);
     }
 
     #[test]
