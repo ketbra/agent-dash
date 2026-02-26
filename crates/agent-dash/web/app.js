@@ -8,6 +8,11 @@
   let selectedSessionId = null;
   let pendingPermissions = {}; // session_id -> permission info
   let pendingImages = []; // [{mime_type, data, dataUrl}]
+  let terminalVisible = false;
+  let terminalInstance = null;
+  let fitAddon = null;
+  let xtermLoaded = false;
+  let xtermLoading = false;
 
   // --- DOM refs ---
   const sessionList = document.getElementById('session-list');
@@ -18,6 +23,10 @@
   const imagePreviewsEl = document.getElementById('image-previews');
   const suggestionEl = document.getElementById('suggestion');
   const thinkingEl = document.getElementById('thinking-indicator');
+  const terminalContainer = document.getElementById('terminal-container');
+  const terminalView = document.getElementById('terminal-view');
+  const terminalToggle = document.getElementById('terminal-toggle');
+  const terminalClose = document.getElementById('terminal-close');
 
   // --- WebSocket ---
   function connect() {
@@ -30,6 +39,9 @@
       if (selectedSessionId) {
         send({ method: 'get_messages', session_id: selectedSessionId, format: 'html', limit: 100 });
         send({ method: 'watch_session', session_id: selectedSessionId, format: 'html' });
+        if (terminalVisible) {
+          send({ method: 'watch_terminal', session_id: selectedSessionId });
+        }
       }
     };
 
@@ -92,6 +104,12 @@
         updatePermissions();
         renderSessions();
         break;
+      case 'terminal_data':
+        if (terminalInstance && data.data) {
+          var bytes = base64ToUint8Array(data.data);
+          terminalInstance.write(bytes);
+        }
+        break;
       case 'prompt_sent':
         // Could show a confirmation toast
         break;
@@ -140,6 +158,9 @@
     // Unwatch previous
     if (selectedSessionId) {
       send({ method: 'unwatch_session', session_id: selectedSessionId });
+      if (terminalVisible) {
+        send({ method: 'unwatch_terminal', session_id: selectedSessionId });
+      }
     }
 
     selectedSessionId = id;
@@ -153,6 +174,14 @@
     // Fetch history then start watching
     send({ method: 'get_messages', session_id: id, format: 'html', limit: 100 });
     send({ method: 'watch_session', session_id: id, format: 'html' });
+
+    // Re-watch terminal for new session if visible
+    if (terminalVisible) {
+      if (terminalInstance) {
+        terminalInstance.clear();
+      }
+      send({ method: 'watch_terminal', session_id: id });
+    }
   }
 
   // --- Messages ---
@@ -402,11 +431,107 @@
     }
   });
 
+  // --- Terminal viewer ---
+  async function loadXterm() {
+    if (xtermLoaded || xtermLoading) return;
+    xtermLoading = true;
+    try {
+      var xtermMod = await import('https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/+esm');
+      var fitMod = await import('https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm');
+      fitAddon = new fitMod.FitAddon();
+      terminalInstance = new xtermMod.Terminal({
+        disableStdin: true,
+        convertEol: false,
+        scrollback: 5000,
+        fontSize: 13,
+        fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+        theme: {
+          background: '#1a1b26',
+          foreground: '#c0caf5',
+          cursor: '#565f89',
+          selectionBackground: '#33467c',
+          black: '#15161e',
+          red: '#f7768e',
+          green: '#9ece6a',
+          yellow: '#e0af68',
+          blue: '#7aa2f7',
+          magenta: '#bb9af7',
+          cyan: '#7dcfff',
+          white: '#a9b1d6',
+          brightBlack: '#414868',
+          brightRed: '#f7768e',
+          brightGreen: '#9ece6a',
+          brightYellow: '#e0af68',
+          brightBlue: '#7aa2f7',
+          brightMagenta: '#bb9af7',
+          brightCyan: '#7dcfff',
+          brightWhite: '#c0caf5'
+        }
+      });
+      terminalInstance.loadAddon(fitAddon);
+      terminalInstance.open(terminalView);
+      fitAddon.fit();
+      xtermLoaded = true;
+    } catch (e) {
+      console.error('Failed to load xterm.js:', e);
+    }
+    xtermLoading = false;
+  }
+
+  function showTerminal() {
+    if (!selectedSessionId) return;
+    terminalVisible = true;
+    terminalContainer.classList.remove('hidden');
+    terminalToggle.classList.add('active');
+    loadXterm().then(function () {
+      if (terminalInstance && fitAddon) {
+        fitAddon.fit();
+      }
+      send({ method: 'watch_terminal', session_id: selectedSessionId });
+    });
+  }
+
+  function hideTerminal() {
+    terminalVisible = false;
+    terminalContainer.classList.add('hidden');
+    terminalToggle.classList.remove('active');
+    if (selectedSessionId) {
+      send({ method: 'unwatch_terminal', session_id: selectedSessionId });
+    }
+  }
+
+  function toggleTerminal() {
+    if (terminalVisible) {
+      hideTerminal();
+    } else {
+      showTerminal();
+    }
+  }
+
+  terminalToggle.onclick = toggleTerminal;
+  terminalClose.onclick = hideTerminal;
+
+  // Refit terminal on window resize.
+  window.addEventListener('resize', function () {
+    if (terminalVisible && fitAddon) {
+      fitAddon.fit();
+    }
+  });
+
   // --- Utilities ---
   function escapeHtml(str) {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+  }
+
+  function base64ToUint8Array(b64) {
+    var raw = atob(b64);
+    var arr = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) {
+      arr[i] = raw.charCodeAt(i);
+    }
+    return arr;
   }
 
   // --- Init ---

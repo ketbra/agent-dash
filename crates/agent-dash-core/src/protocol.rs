@@ -141,6 +141,19 @@ pub enum ClientRequest {
         session_id: String,
         thinking_text: Option<String>,
     },
+    #[serde(rename = "watch_terminal")]
+    WatchTerminal {
+        session_id: String,
+    },
+    #[serde(rename = "unwatch_terminal")]
+    UnwatchTerminal {
+        session_id: String,
+    },
+    #[serde(rename = "terminal_output")]
+    TerminalOutput {
+        session_id: String,
+        data: String, // base64-encoded raw PTY bytes
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +201,11 @@ pub enum ServerEvent {
     #[serde(rename = "inject_prompt")]
     InjectPrompt {
         text: String,
+    },
+    #[serde(rename = "terminal_data")]
+    TerminalData {
+        session_id: String,
+        data: String, // base64-encoded raw PTY bytes
     },
     #[serde(rename = "error")]
     Error {

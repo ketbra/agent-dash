@@ -1,6 +1,7 @@
 use crate::agents::AgentProfile;
 use agent_dash_core::paths;
 use agent_dash_core::protocol::{ClientRequest, ServerEvent, encode_line};
+use base64::Engine as _;
 use crossterm::terminal;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -350,6 +351,9 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
     // Channel for sending detected screen updates (suggestion + thinking text) to the daemon.
     let (screen_tx, screen_rx) = std::sync::mpsc::sync_channel::<ScreenUpdate>(4);
 
+    // Channel for forwarding raw terminal output to the daemon (for web viewers).
+    let (term_data_tx, term_data_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(64);
+
     // --- PTY reader thread: reads agent output, writes to stdout ---
     let running_reader = running.clone();
     let term_size_reader = term_size.clone();
@@ -372,6 +376,9 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
                             break;
                         }
                         let _ = stdout.flush();
+
+                        // Forward raw bytes to terminal data channel for web viewers.
+                        let _ = term_data_tx.try_send(buf[..n].to_vec());
 
                         // Update parser size if terminal was resized.
                         let (cur_cols, cur_rows) = term_size_reader.load();
@@ -437,6 +444,42 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
                             if send_to_daemon(&conn, &req).is_err() {
                                 break;
                             }
+                        }
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+            }
+        });
+    }
+
+    // --- Terminal data sender thread: forwards raw PTY output to daemon ---
+    {
+        let running_term = running.clone();
+        let session_id_term = session_id.clone();
+        std::thread::spawn(move || {
+            let Some(conn) = try_connect_daemon() else {
+                return;
+            };
+            let engine = base64::engine::general_purpose::STANDARD;
+            while running_term.load(Ordering::Relaxed) {
+                match term_data_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                    Ok(data) => {
+                        // Batch: drain any additional pending data to reduce message count.
+                        let mut combined = data;
+                        while let Ok(more) = term_data_rx.try_recv() {
+                            combined.extend_from_slice(&more);
+                            if combined.len() > 16384 {
+                                break;
+                            }
+                        }
+                        let b64 = engine.encode(&combined);
+                        let req = ClientRequest::TerminalOutput {
+                            session_id: session_id_term.clone(),
+                            data: b64,
+                        };
+                        if send_to_daemon(&conn, &req).is_err() {
+                            break;
                         }
                     }
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
