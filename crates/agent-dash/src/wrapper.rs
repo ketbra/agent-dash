@@ -38,43 +38,82 @@ fn detect_suggestion(screen: &vt100::Screen) -> Option<String> {
         return None;
     }
 
-    let (cursor_row, cursor_col) = screen.cursor_position();
     let width = screen.size().1;
+    let rows = screen.size().0;
 
-    // Check if cursor row starts with "> "
-    let cell0 = screen.cell(cursor_row, 0)?;
-    let cell1 = screen.cell(cursor_row, 1)?;
-    if cell0.contents() != ">" || cell1.contents() != " " {
-        return None;
-    }
-
-    // Scan from cursor_col forward for dim text
-    let mut text = String::new();
-    for c in cursor_col..width {
-        let Some(cell) = screen.cell(cursor_row, c) else {
-            break;
-        };
-        let contents = cell.contents();
-        if contents.is_empty() || contents == " " && text.is_empty() {
-            // Skip leading spaces, but break on empty cells
-            if contents.is_empty() {
-                break;
+    // Scan all rows for a prompt line. Claude Code uses "❯" (U+276F) as its
+    // prompt character, sometimes preceded by a space. Look for a row that
+    // starts with an "❯" prompt and contains dim text after non-dim user text.
+    for r in (0..rows).rev() {
+        // Find prompt character in first few columns.
+        let mut prompt_col = None;
+        for c in 0..4u16 {
+            if let Some(cell) = screen.cell(r, c) {
+                let ch = cell.contents();
+                if ch == "❯" || ch == ">" {
+                    prompt_col = Some(c);
+                    break;
+                }
             }
-            continue;
         }
-        if cell.dim() {
-            text.push_str(&contents);
-        } else if !text.is_empty() {
-            break; // non-dim after dim = end
+        let Some(pcol) = prompt_col else {
+            continue;
+        };
+
+        // Collect ALL dim text on this row after the prompt character.
+        // Spaces and punctuation between dim segments may not be dim
+        // themselves, so we track the last dim position and fill gaps
+        // with whatever characters are in between.
+        let mut dim_parts: Vec<(u16, String)> = Vec::new(); // (col, text)
+        let mut found_non_dim_content = false;
+        for c in (pcol + 1)..width {
+            let Some(cell) = screen.cell(r, c) else {
+                break;
+            };
+            let contents = cell.contents();
+            if contents.is_empty() {
+                continue;
+            }
+            if cell.dim() {
+                dim_parts.push((c, contents.to_string()));
+            } else {
+                found_non_dim_content = true;
+            }
+        }
+
+        if !dim_parts.is_empty() {
+            // Build suggestion from dim segments. If there are small gaps
+            // (1-2 cols) between consecutive dim cells, fill them with
+            // the actual cell contents (spaces, punctuation).
+            let mut text = dim_parts[0].1.clone();
+            for i in 1..dim_parts.len() {
+                let gap = dim_parts[i].0 - dim_parts[i - 1].0;
+                if gap > 3 {
+                    break; // large gap = separate dim region, stop
+                }
+                // Fill gap with actual cell contents.
+                for g in (dim_parts[i - 1].0 + 1)..dim_parts[i].0 {
+                    if let Some(cell) = screen.cell(r, g) {
+                        let ch = cell.contents();
+                        text.push_str(if ch.is_empty() { " " } else { ch });
+                    }
+                }
+                text.push_str(&dim_parts[i].1);
+            }
+
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+
+        // Found a prompt line but no dim text - no suggestion right now.
+        if found_non_dim_content || pcol < width.saturating_sub(1) {
+            return None;
         }
     }
 
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
+    None
 }
 
 /// Ensure the daemon is running. If not, fork it as a background process.
@@ -538,19 +577,25 @@ mod tests {
     }
 
     #[test]
-    fn detect_dim_suggestion_on_prompt_line() {
-        // Simulate: "> " then dim text, then move cursor back to col 3 (1-indexed)
-        // \x1b[2m = SGR dim on, \x1b[0m = SGR reset
-        // \x1b[1;3H = move cursor to row 1, col 3 (0-indexed: row 0, col 2)
+    fn detect_dim_suggestion_with_gt_prompt() {
+        // "> " then dim text
         let seq = b"> \x1b[2mcheck the tests\x1b[0m\x1b[1;3H";
-
         let result = suggestion_from(seq);
         assert_eq!(result, Some("check the tests".to_string()));
     }
 
     #[test]
+    fn detect_dim_suggestion_with_heavy_angle_prompt() {
+        // Claude Code uses "❯" (U+276F) as prompt
+        let mut seq = Vec::new();
+        seq.extend_from_slice("❯ ".as_bytes());
+        seq.extend_from_slice(b"\x1b[2mrun the tests\x1b[0m");
+        let result = suggestion_from(&seq);
+        assert_eq!(result, Some("run the tests".to_string()));
+    }
+
+    #[test]
     fn no_suggestion_on_non_prompt_line() {
-        // Line without "> " prefix
         let result = suggestion_from(b"$ \x1b[2msome text\x1b[0m");
         assert_eq!(result, None);
     }
@@ -558,9 +603,7 @@ mod tests {
     #[test]
     fn no_suggestion_on_alternate_screen() {
         let mut parser = vt100::Parser::new(24, 80, 0);
-        // Enter alternate screen
         parser.process(b"\x1b[?1049h");
-        // Write prompt with dim text
         parser.process(b"> \x1b[2msuggestion\x1b[0m\x1b[1;3H");
         let result = detect_suggestion(parser.screen());
         assert_eq!(result, None);
@@ -570,8 +613,20 @@ mod tests {
     fn no_suggestion_when_no_dim_text() {
         let input = b"> hello world";
         let result = suggestion_from(input);
-        // Cursor ends at col 13, no dim text after it
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn detect_suggestion_with_non_dim_gaps() {
+        // Simulate: prompt, then dim "Try", non-dim quote, dim text, non-dim quote
+        // ❯ Try "refactor monitor.rs"
+        // where quotes are not dim but the words are
+        let mut seq = Vec::new();
+        seq.extend_from_slice("❯ ".as_bytes());
+        seq.extend_from_slice(b"\x1b[2mTry \x1b[0m\"\x1b[2mrefactor monitor.rs\x1b[0m\"");
+        let result = suggestion_from(&seq);
+        // Trailing non-dim quote is not included — that's fine.
+        assert_eq!(result, Some("Try \"refactor monitor.rs".to_string()));
     }
 
     #[test]

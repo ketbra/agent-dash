@@ -145,6 +145,7 @@
     messagesEl.innerHTML = '<div id="empty-state">Loading...</div>';
     promptForm.classList.remove('hidden');
     updatePermissions();
+    updateSuggestion();
 
     // Fetch history then start watching
     send({ method: 'get_messages', session_id: id, format: 'html', limit: 100 });
