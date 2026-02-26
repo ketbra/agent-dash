@@ -405,10 +405,22 @@ pub async fn run(web_port: u16) {
                         }
                         wrapper_channels.insert(session_id.clone(), prompt_tx);
 
-                        // On reconnect, re-link the real session_id to this wrapper's channel.
+                        // On reconnect, re-link the real session_id to this wrapper's channel
+                        // and resolve the JSONL path if missing.
                         if let Some(ref real_id) = real_session_id {
                             if let Some(tx) = wrapper_channels.get(&session_id) {
                                 wrapper_channels.insert(real_id.clone(), tx.clone());
+                            }
+                            // Populate jsonl_path on the wrapper from the real session ID.
+                            let needs_path = state.sessions.get(&session_id)
+                                .is_some_and(|s| s.jsonl_path.is_none());
+                            if needs_path {
+                                if let Some(path) = find_jsonl_on_disk(real_id) {
+                                    let path_str = path.to_string_lossy().to_string();
+                                    if let Some(s) = state.sessions.get_mut(&session_id) {
+                                        s.jsonl_path = Some(path_str);
+                                    }
+                                }
                             }
                         }
 
@@ -428,6 +440,18 @@ pub async fn run(web_port: u16) {
                         state.remove_wrapper(&session_id);
                         state_dirty = true;
                         broadcast_state(&mut subscribers, &state);
+                    }
+                    ClientMessage::UpdateSuggestion {
+                        session_id,
+                        suggestion,
+                    } => {
+                        if let Some(session) = state.sessions.get_mut(&session_id) {
+                            if session.prompt_suggestion != suggestion {
+                                session.prompt_suggestion = suggestion;
+                                state_dirty = true;
+                                broadcast_state(&mut subscribers, &state);
+                            }
+                        }
                     }
                     ClientMessage::SendPrompt {
                         session_id,
@@ -557,6 +581,7 @@ pub async fn run(web_port: u16) {
                     state_dirty = false;
                 }
             }
+
         }
     }
 }
@@ -694,6 +719,7 @@ mod tests {
             is_main: false,
             parent_wrapper_id: None,
             agent: None,
+            prompt_suggestion: None,
         }
     }
 

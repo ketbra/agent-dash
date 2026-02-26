@@ -77,6 +77,11 @@ pub enum ClientMessage {
         images: Vec<ImageAttachment>,
         reply: oneshot::Sender<String>,
     },
+    /// Wrapper updating prompt suggestion for a session.
+    UpdateSuggestion {
+        session_id: String,
+        suggestion: Option<String>,
+    },
 }
 
 /// Run the client listener. Accepts persistent bidirectional connections on
@@ -317,10 +322,14 @@ async fn handle_client_connection(
                                     // Handle explicit unregister; ignore others.
                                     let trimmed = line.trim();
                                     if !trimmed.is_empty() {
-                                        if let Ok(ClientRequest::UnregisterWrapper { .. }) =
-                                            serde_json::from_str::<ClientRequest>(trimmed)
-                                        {
-                                            break;
+                                        match serde_json::from_str::<ClientRequest>(trimmed) {
+                                            Ok(ClientRequest::UnregisterWrapper { .. }) => {
+                                                break;
+                                            }
+                                            Ok(ClientRequest::UpdateSuggestion { session_id, suggestion }) => {
+                                                let _ = tx.send(ClientMessage::UpdateSuggestion { session_id, suggestion }).await;
+                                            }
+                                            _ => {}
                                         }
                                     }
                                 }
@@ -340,6 +349,9 @@ async fn handle_client_connection(
                 let _ = tx
                     .send(ClientMessage::UnregisterWrapper { session_id })
                     .await;
+            }
+            ClientRequest::UpdateSuggestion { session_id, suggestion } => {
+                let _ = tx.send(ClientMessage::UpdateSuggestion { session_id, suggestion }).await;
             }
             ClientRequest::SendPrompt { session_id, text, images } => {
                 let (reply_tx, reply_rx) = oneshot::channel();

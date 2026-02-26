@@ -24,3 +24,4 @@ qrcode = { workspace = true }
 axum = { workspace = true }
 tower-http = { workspace = true }
 libc = "0.2"
+vt100 = { workspace = true }

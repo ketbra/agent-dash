@@ -5,8 +5,77 @@ use crossterm::terminal;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
+
+/// Packs (cols, rows) into a single AtomicU32 for lock-free sharing
+/// between the resize thread and the reader thread.
+struct AtomicTermSize(AtomicU32);
+
+impl AtomicTermSize {
+    fn new(cols: u16, rows: u16) -> Self {
+        Self(AtomicU32::new(((cols as u32) << 16) | rows as u32))
+    }
+
+    fn store(&self, cols: u16, rows: u16) {
+        self.0
+            .store(((cols as u32) << 16) | rows as u32, Ordering::Relaxed);
+    }
+
+    fn load(&self) -> (u16, u16) {
+        let v = self.0.load(Ordering::Relaxed);
+        ((v >> 16) as u16, v as u16)
+    }
+}
+
+/// Detect prompt suggestion (dim text after cursor) on the current prompt line.
+///
+/// Returns `Some(text)` if dim text is found after the cursor on a line
+/// starting with `> `, or `None` otherwise.
+fn detect_suggestion(screen: &vt100::Screen) -> Option<String> {
+    if screen.alternate_screen() {
+        return None;
+    }
+
+    let (cursor_row, cursor_col) = screen.cursor_position();
+    let width = screen.size().1;
+
+    // Check if cursor row starts with "> "
+    let cell0 = screen.cell(cursor_row, 0)?;
+    let cell1 = screen.cell(cursor_row, 1)?;
+    if cell0.contents() != ">" || cell1.contents() != " " {
+        return None;
+    }
+
+    // Scan from cursor_col forward for dim text
+    let mut text = String::new();
+    for c in cursor_col..width {
+        let Some(cell) = screen.cell(cursor_row, c) else {
+            break;
+        };
+        let contents = cell.contents();
+        if contents.is_empty() || contents == " " && text.is_empty() {
+            // Skip leading spaces, but break on empty cells
+            if contents.is_empty() {
+                break;
+            }
+            continue;
+        }
+        if cell.dim() {
+            text.push_str(&contents);
+        } else if !text.is_empty() {
+            break; // non-dim after dim = end
+        }
+    }
+
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
 
 /// Ensure the daemon is running. If not, fork it as a background process.
 /// Returns true if the daemon is available, false if couldn't start.
@@ -186,13 +255,26 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
         }
     });
 
+    // Shared terminal size for vt100 parser.
+    let term_size = Arc::new(AtomicTermSize::new(cols, rows));
+
+    // Channel for sending detected suggestions to the daemon.
+    let (suggest_tx, suggest_rx) = std::sync::mpsc::sync_channel::<Option<String>>(4);
+
     // --- PTY reader thread: reads agent output, writes to stdout ---
     let running_reader = running.clone();
+    let term_size_reader = term_size.clone();
     let reader_handle = {
         let mut pty_reader = pty_reader;
         std::thread::spawn(move || {
             let mut stdout = std::io::stdout();
             let mut buf = [0u8; 4096];
+            let mut parser = vt100::Parser::new(rows, cols, 0);
+            let mut last_suggestion: Option<String> = None;
+            let mut last_check = Instant::now();
+            let debounce = std::time::Duration::from_millis(100);
+            let mut last_parser_size = (cols, rows);
+
             loop {
                 match pty_reader.read(&mut buf) {
                     Ok(0) => break,
@@ -201,6 +283,27 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
                             break;
                         }
                         let _ = stdout.flush();
+
+                        // Update parser size if terminal was resized.
+                        let (cur_cols, cur_rows) = term_size_reader.load();
+                        if (cur_cols, cur_rows) != last_parser_size {
+                            parser.screen_mut().set_size(cur_rows, cur_cols);
+                            last_parser_size = (cur_cols, cur_rows);
+                        }
+
+                        // Feed bytes to vt100 parser.
+                        parser.process(&buf[..n]);
+
+                        // Debounced suggestion detection.
+                        let now = Instant::now();
+                        if now.duration_since(last_check) >= debounce {
+                            last_check = now;
+                            let suggestion = detect_suggestion(parser.screen());
+                            if suggestion != last_suggestion {
+                                last_suggestion = suggestion.clone();
+                                let _ = suggest_tx.try_send(suggestion);
+                            }
+                        }
                     }
                     Err(_) => break,
                 }
@@ -208,6 +311,33 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
             running_reader.store(false, Ordering::Relaxed);
         })
     };
+
+    // --- Suggestion sender thread: drains suggestion channel, sends to daemon ---
+    {
+        let running_suggest = running.clone();
+        let session_id_suggest = session_id.clone();
+        std::thread::spawn(move || {
+            // Open a dedicated connection for suggestion updates.
+            let Some(conn) = try_connect_daemon() else {
+                return;
+            };
+            while running_suggest.load(Ordering::Relaxed) {
+                match suggest_rx.recv_timeout(std::time::Duration::from_millis(500)) {
+                    Ok(suggestion) => {
+                        let req = ClientRequest::UpdateSuggestion {
+                            session_id: session_id_suggest.clone(),
+                            suggestion,
+                        };
+                        if send_to_daemon(&conn, &req).is_err() {
+                            break;
+                        }
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+            }
+        });
+    }
 
     // --- Daemon listener thread: listens for inject_prompt commands ---
     // Reconnects automatically if the daemon restarts.
@@ -293,6 +423,7 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
     {
         let master = pair.master;
         let running_resize = running.clone();
+        let term_size_resize = term_size;
         std::thread::spawn(move || {
             let mut last_size = (cols, rows);
             loop {
@@ -308,6 +439,7 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
                             pixel_width: 0,
                             pixel_height: 0,
                         });
+                        term_size_resize.store(new_cols, new_rows);
                         last_size = (new_cols, new_rows);
                     }
                 }
@@ -392,4 +524,61 @@ fn which(binary: &str) -> Option<std::path::PathBuf> {
             }
         })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper: create a parser, write VT100 sequences, return detected suggestion.
+    fn suggestion_from(sequences: &[u8]) -> Option<String> {
+        let mut parser = vt100::Parser::new(24, 80, 0);
+        parser.process(sequences);
+        detect_suggestion(parser.screen())
+    }
+
+    #[test]
+    fn detect_dim_suggestion_on_prompt_line() {
+        // Simulate: "> " then dim text, then move cursor back to col 3 (1-indexed)
+        // \x1b[2m = SGR dim on, \x1b[0m = SGR reset
+        // \x1b[1;3H = move cursor to row 1, col 3 (0-indexed: row 0, col 2)
+        let seq = b"> \x1b[2mcheck the tests\x1b[0m\x1b[1;3H";
+
+        let result = suggestion_from(seq);
+        assert_eq!(result, Some("check the tests".to_string()));
+    }
+
+    #[test]
+    fn no_suggestion_on_non_prompt_line() {
+        // Line without "> " prefix
+        let result = suggestion_from(b"$ \x1b[2msome text\x1b[0m");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn no_suggestion_on_alternate_screen() {
+        let mut parser = vt100::Parser::new(24, 80, 0);
+        // Enter alternate screen
+        parser.process(b"\x1b[?1049h");
+        // Write prompt with dim text
+        parser.process(b"> \x1b[2msuggestion\x1b[0m\x1b[1;3H");
+        let result = detect_suggestion(parser.screen());
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn no_suggestion_when_no_dim_text() {
+        let input = b"> hello world";
+        let result = suggestion_from(input);
+        // Cursor ends at col 13, no dim text after it
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn atomic_term_size_round_trip() {
+        let ats = AtomicTermSize::new(120, 40);
+        assert_eq!(ats.load(), (120, 40));
+        ats.store(200, 50);
+        assert_eq!(ats.load(), (200, 50));
+    }
 }

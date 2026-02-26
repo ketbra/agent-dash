@@ -22,6 +22,7 @@ pub struct InternalSession {
     pub is_main: bool,
     pub parent_wrapper_id: Option<String>,
     pub agent: Option<String>,
+    pub prompt_suggestion: Option<String>,
 }
 
 /// A pending permission request.
@@ -75,6 +76,7 @@ impl DaemonState {
                 is_main: false,
                 parent_wrapper_id: None,
                 agent: None,
+                prompt_suggestion: None,
             });
     }
 
@@ -304,6 +306,7 @@ impl DaemonState {
                     input_reason,
                     active_tool,
                     subagent_count,
+                    prompt_suggestion: s.prompt_suggestion.clone(),
                 }
             })
             .collect();

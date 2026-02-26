@@ -131,6 +131,11 @@ pub enum ClientRequest {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         images: Vec<ImageAttachment>,
     },
+    #[serde(rename = "update_suggestion")]
+    UpdateSuggestion {
+        session_id: String,
+        suggestion: Option<String>,
+    },
 }
 
 // ---------------------------------------------------------------------------

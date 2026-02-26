@@ -16,6 +16,7 @@
   const promptInput = document.getElementById('prompt-input');
   const permBanner = document.getElementById('permission-banner');
   const imagePreviewsEl = document.getElementById('image-previews');
+  const suggestionEl = document.getElementById('suggestion');
 
   // --- WebSocket ---
   function connect() {
@@ -66,6 +67,7 @@
         }
         renderSessions();
         updatePermissions();
+        updateSuggestion();
         break;
       case 'messages':
         renderMessages(data.messages || []);
@@ -345,6 +347,41 @@
       });
     };
   }
+
+  // --- Prompt suggestion ---
+  function updateSuggestion() {
+    if (!selectedSessionId) {
+      suggestionEl.classList.add('hidden');
+      return;
+    }
+    var session = sessions.find(function(s) { return s.session_id === selectedSessionId; });
+    if (session && session.prompt_suggestion) {
+      suggestionEl.textContent = 'Tab: ' + session.prompt_suggestion;
+      suggestionEl.classList.remove('hidden');
+    } else {
+      suggestionEl.classList.add('hidden');
+    }
+  }
+
+  suggestionEl.onclick = function () {
+    var session = sessions.find(function(s) { return s.session_id === selectedSessionId; });
+    if (session && session.prompt_suggestion) {
+      promptInput.value = session.prompt_suggestion;
+      promptInput.focus();
+      suggestionEl.classList.add('hidden');
+    }
+  };
+
+  promptInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Tab' && !suggestionEl.classList.contains('hidden')) {
+      e.preventDefault();
+      var session = sessions.find(function(s) { return s.session_id === selectedSessionId; });
+      if (session && session.prompt_suggestion) {
+        promptInput.value = session.prompt_suggestion;
+        suggestionEl.classList.add('hidden');
+      }
+    }
+  });
 
   // --- Utilities ---
   function escapeHtml(str) {
