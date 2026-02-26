@@ -283,9 +283,16 @@
       '<div class="perm-info">' +
       '<div class="perm-tool">' + escapeHtml(perm.tool) + '</div>' +
       (function () {
-        var parts = (perm.detail || '').split('\n');
-        var cmd = parts[0] || '';
-        var desc = parts.slice(1).join('\n');
+        var detail = perm.detail || '';
+        var lastNl = detail.lastIndexOf('\n');
+        var cmd, desc;
+        if (lastNl === -1) {
+          cmd = detail;
+          desc = '';
+        } else {
+          cmd = detail.substring(0, lastNl);
+          desc = detail.substring(lastNl + 1);
+        }
         var h = '<div class="perm-detail">' + escapeHtml(cmd) + '</div>';
         if (desc) h += '<div class="perm-desc">' + escapeHtml(desc) + '</div>';
         return h;
