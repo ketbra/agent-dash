@@ -349,7 +349,19 @@ fn render_html(role: &str, blocks: &[ContentBlock]) -> String {
                 let rendered = comrak::markdown_to_html(text, &comrak::Options::default());
                 let inline = strip_outer_p(&rendered);
 
-                if role == "user" {
+                // Skip our bullet if the text already starts with a Claude
+                // spinner character (● ·  ✢ * ✳ ✶ ✻ ✽) to avoid duplicates.
+                let starts_with_bullet = text.starts_with('●')
+                    || text.starts_with('·')
+                    || text.starts_with('✢')
+                    || text.starts_with('*')
+                    || text.starts_with('✳')
+                    || text.starts_with('✶')
+                    || text.starts_with('✻')
+                    || text.starts_with('✽')
+                    || text.starts_with('•');
+
+                if role == "user" || starts_with_bullet {
                     html.push_str(&format!(
                         "<div class=\"block-text\">{}</div>",
                         inline
@@ -847,6 +859,17 @@ mod tests {
         let html = render_html("assistant", &blocks);
         assert!(html.contains("block-text"));
         assert!(html.contains("\u{2022} Hello"));
+    }
+
+    #[test]
+    fn html_no_double_bullet_for_spinner_text() {
+        let blocks = vec![ContentBlock::Text {
+            text: "● Pushed both commits to origin/main.".into(),
+        }];
+        let html = render_html("assistant", &blocks);
+        assert!(html.contains("block-text"));
+        // Should NOT have our bullet prepended since text already starts with ●
+        assert!(!html.contains("\u{2022}"));
     }
 
     #[test]
