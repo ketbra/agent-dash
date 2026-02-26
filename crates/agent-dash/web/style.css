@@ -97,7 +97,12 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   line-height: 1.6;
 }
 
-#messages .msg-user { color: var(--accent); margin-bottom: 12px; }
+#messages .msg-user {
+  color: var(--accent);
+  margin-bottom: 12px;
+  padding-left: 16px;
+  border-left: 2px solid var(--accent);
+}
 #messages .msg-assistant { color: var(--text); margin-bottom: 12px; }
 #messages strong { color: var(--yellow); }
 #messages code { background: var(--bg-surface); padding: 2px 5px; border-radius: 3px; font-size: 12px; }
@@ -109,6 +114,33 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   margin: 8px 0;
 }
 #messages pre code { background: none; padding: 0; }
+
+.block-text { margin: 4px 0; white-space: pre-wrap; }
+.block-text p { margin: 0; display: inline; }
+.block-tool-use { margin: 4px 0; }
+.block-tool-use strong { color: var(--yellow); }
+.tool-detail { color: var(--text-dim); font-size: 12px; }
+.block-tool-result { margin: 2px 0 8px 0; }
+.tool-output-line { color: var(--text-dim); font-size: 12px; white-space: pre-wrap; line-height: 1.5; }
+.tool-output-collapsed summary {
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 0;
+  user-select: none;
+}
+.tool-output-collapsed summary:hover { color: var(--text); }
+.tool-output-full {
+  color: var(--text-dim);
+  font-size: 12px;
+  margin: 4px 0 0 0;
+  padding: 8px;
+  background: var(--bg-surface);
+  border-radius: 4px;
+  white-space: pre-wrap;
+  max-height: 400px;
+  overflow-y: auto;
+}
 
 #prompt-form {
   display: flex;

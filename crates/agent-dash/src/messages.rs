@@ -106,7 +106,7 @@ fn parse_one_line(line: &str, format: &str) -> Option<ChatMessage> {
 
     let content = match format {
         "markdown" => ChatContent::Rendered(render_markdown(&blocks)),
-        "html" => ChatContent::Rendered(render_html(&blocks)),
+        "html" => ChatContent::Rendered(render_html(role, &blocks)),
         _ => ChatContent::Structured(blocks), // "structured" or anything else
     };
 
@@ -328,10 +328,154 @@ fn render_markdown(blocks: &[ContentBlock]) -> String {
     parts.join("\n\n")
 }
 
-/// Render content blocks as HTML by running markdown output through comrak.
-fn render_html(blocks: &[ContentBlock]) -> String {
-    let md = render_markdown(blocks);
-    comrak::markdown_to_html(&md, &comrak::Options::default())
+/// Render content blocks as HTML with Claude Code terminal-style formatting.
+///
+/// - Text blocks: bullet-prefixed paragraphs (assistant) or plain text (user),
+///   with inline markdown (backticks, bold, italic) rendered via comrak.
+/// - Tool use: `• ToolName(detail)` with bold tool name.
+/// - Tool result: box-drawing nested output with collapsible long content.
+fn render_html(role: &str, blocks: &[ContentBlock]) -> String {
+    const VISIBLE_LINES: usize = 3;
+    const COLLAPSE_THRESHOLD: usize = 5;
+    const DETAIL_MAX_LEN: usize = 80;
+
+    let mut html = String::new();
+
+    for block in blocks {
+        match block {
+            ContentBlock::Text { text } => {
+                // Render inline markdown (backticks, bold, italic) via comrak,
+                // then strip the outer <p> wrapper to get inline HTML.
+                let rendered = comrak::markdown_to_html(text, &comrak::Options::default());
+                let inline = strip_outer_p(&rendered);
+
+                if role == "user" {
+                    html.push_str(&format!(
+                        "<div class=\"block-text\">{}</div>",
+                        inline
+                    ));
+                } else {
+                    html.push_str(&format!(
+                        "<div class=\"block-text\">\u{2022} {}</div>",
+                        inline
+                    ));
+                }
+            }
+            ContentBlock::ToolUse { name, detail, .. } => {
+                let escaped_name = escape_html(name);
+                if detail.is_empty() {
+                    html.push_str(&format!(
+                        "<div class=\"block-tool-use\">\u{2022} <strong>{}</strong></div>",
+                        escaped_name
+                    ));
+                } else {
+                    let truncated = truncate_detail(detail, DETAIL_MAX_LEN);
+                    let escaped_detail = escape_html(&truncated);
+                    html.push_str(&format!(
+                        "<div class=\"block-tool-use\">\u{2022} <strong>{}</strong>(<span class=\"tool-detail\">{}</span>)</div>",
+                        escaped_name, escaped_detail
+                    ));
+                }
+            }
+            ContentBlock::ToolResult { output, .. } => {
+                if let Some(output) = output {
+                    let lines: Vec<&str> = output.lines().collect();
+                    let total = lines.len();
+
+                    if total == 0 {
+                        continue;
+                    }
+
+                    html.push_str("<div class=\"block-tool-result\">");
+
+                    if total <= COLLAPSE_THRESHOLD {
+                        // Show all lines with box-drawing prefix.
+                        for (i, line) in lines.iter().enumerate() {
+                            let prefix = if i == 0 { "\u{2514}\u{2500} " } else { "   " };
+                            html.push_str(&format!(
+                                "<div class=\"tool-output-line\">{}{}</div>",
+                                prefix,
+                                escape_html(line)
+                            ));
+                        }
+                    } else {
+                        // Show first VISIBLE_LINES, collapse the rest.
+                        for (i, line) in lines[..VISIBLE_LINES].iter().enumerate() {
+                            let prefix = if i == 0 { "\u{2514}\u{2500} " } else { "   " };
+                            html.push_str(&format!(
+                                "<div class=\"tool-output-line\">{}{}</div>",
+                                prefix,
+                                escape_html(line)
+                            ));
+                        }
+                        let remaining = total - VISIBLE_LINES;
+                        html.push_str(&format!(
+                            "<details class=\"tool-output-collapsed\"><summary>   \u{2026} +{} lines (click to expand)</summary><pre class=\"tool-output-full\">",
+                            remaining
+                        ));
+                        for line in &lines[VISIBLE_LINES..] {
+                            html.push_str(&escape_html(line));
+                            html.push('\n');
+                        }
+                        html.push_str("</pre></details>");
+                    }
+
+                    html.push_str("</div>");
+                }
+            }
+        }
+    }
+
+    html
+}
+
+/// Strip the outer `<p>...</p>\n` wrapper that comrak adds around inline text,
+/// leaving inner HTML (code, strong, em) intact. If the content has multiple
+/// `<p>` blocks, return as-is.
+fn strip_outer_p(html: &str) -> String {
+    let trimmed = html.trim();
+    // Only strip if there's exactly one <p> wrapper.
+    if trimmed.starts_with("<p>")
+        && trimmed.ends_with("</p>")
+        && trimmed.matches("<p>").count() == 1
+    {
+        trimmed[3..trimmed.len() - 4].to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// Escape HTML special characters to prevent XSS and rendering issues.
+fn escape_html(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#x27;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Truncate a tool detail string for display in a header line.
+///
+/// Replaces newlines with spaces and truncates to `max_len` chars with an
+/// ellipsis if needed.
+fn truncate_detail(s: &str, max_len: usize) -> String {
+    let oneline: String = s.chars().map(|c| if c == '\n' { ' ' } else { c }).collect();
+    if oneline.len() <= max_len {
+        oneline
+    } else {
+        let mut end = max_len;
+        while end > 0 && !oneline.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}\u{2026}", &oneline[..end])
+    }
 }
 
 /// Truncate a string to at most `max_chars` characters, appending "..." if
@@ -696,12 +840,24 @@ mod tests {
     // -- render_html ---------------------------------------------------------
 
     #[test]
-    fn html_wraps_in_tags() {
+    fn html_assistant_text_has_bullet() {
         let blocks = vec![ContentBlock::Text {
             text: "Hello".into(),
         }];
-        let html = render_html(&blocks);
-        assert!(html.contains("<p>Hello</p>"));
+        let html = render_html("assistant", &blocks);
+        assert!(html.contains("block-text"));
+        assert!(html.contains("\u{2022} Hello"));
+    }
+
+    #[test]
+    fn html_user_text_no_bullet() {
+        let blocks = vec![ContentBlock::Text {
+            text: "Hello".into(),
+        }];
+        let html = render_html("user", &blocks);
+        assert!(html.contains("block-text"));
+        assert!(html.contains("Hello"));
+        assert!(!html.contains("\u{2022}"));
     }
 
     #[test]
@@ -711,9 +867,96 @@ mod tests {
             detail: "ls".into(),
             input: None,
         }];
-        let html = render_html(&blocks);
+        let html = render_html("assistant", &blocks);
         assert!(html.contains("<strong>Bash</strong>"));
-        assert!(html.contains("<code>ls</code>"));
+        assert!(html.contains("tool-detail"));
+        assert!(html.contains("ls"));
+    }
+
+    #[test]
+    fn html_tool_use_truncates_long_detail() {
+        let long_detail = "x".repeat(120);
+        let blocks = vec![ContentBlock::ToolUse {
+            name: "Bash".into(),
+            detail: long_detail.clone(),
+            input: None,
+        }];
+        let html = render_html("assistant", &blocks);
+        assert!(html.contains("\u{2026}")); // ellipsis
+        assert!(!html.contains(&long_detail));
+    }
+
+    #[test]
+    fn html_tool_result_short_no_collapse() {
+        let blocks = vec![ContentBlock::ToolResult {
+            name: "Bash".into(),
+            output: Some("line1\nline2\nline3".into()),
+        }];
+        let html = render_html("assistant", &blocks);
+        assert!(html.contains("tool-output-line"));
+        assert!(html.contains("\u{2514}\u{2500}")); // box-drawing on first line
+        assert!(html.contains("line3"));
+        assert!(!html.contains("<details"));
+    }
+
+    #[test]
+    fn html_tool_result_long_collapses() {
+        let lines: Vec<String> = (1..=10).map(|i| format!("line {}", i)).collect();
+        let output = lines.join("\n");
+        let blocks = vec![ContentBlock::ToolResult {
+            name: "Bash".into(),
+            output: Some(output),
+        }];
+        let html = render_html("assistant", &blocks);
+        assert!(html.contains("<details"));
+        assert!(html.contains("+7 lines"));
+        assert!(html.contains("click to expand"));
+        // First 3 lines visible, rest collapsed
+        assert!(html.contains("line 1"));
+        assert!(html.contains("line 3"));
+    }
+
+    #[test]
+    fn html_escapes_special_chars() {
+        let blocks = vec![ContentBlock::Text {
+            text: "<script>alert('xss')</script>".into(),
+        }];
+        let html = render_html("assistant", &blocks);
+        // Must not contain raw <script> tags — comrak escapes or strips them
+        assert!(!html.contains("<script>"));
+    }
+
+    #[test]
+    fn html_escapes_tool_output() {
+        // Tool results bypass comrak — verify our escape_html works
+        let blocks = vec![ContentBlock::ToolResult {
+            name: "Bash".into(),
+            output: Some("<b>bold</b> & \"quoted\"".into()),
+        }];
+        let html = render_html("assistant", &blocks);
+        assert!(!html.contains("<b>bold</b>"));
+        assert!(html.contains("&lt;b&gt;bold&lt;/b&gt;"));
+        assert!(html.contains("&amp;"));
+    }
+
+    #[test]
+    fn html_tool_detail_newlines_replaced() {
+        let blocks = vec![ContentBlock::ToolUse {
+            name: "Bash".into(),
+            detail: "echo hello\necho world".into(),
+            input: None,
+        }];
+        let html = render_html("assistant", &blocks);
+        assert!(html.contains("echo hello echo world"));
+    }
+
+    #[test]
+    fn html_preserves_inline_code() {
+        let blocks = vec![ContentBlock::Text {
+            text: "Run `cargo test` now".into(),
+        }];
+        let html = render_html("assistant", &blocks);
+        assert!(html.contains("<code>cargo test</code>"));
     }
 
     // -- truncate_output -----------------------------------------------------
@@ -750,7 +993,7 @@ mod tests {
         let msgs = parse_lines(&[line.to_string()], "html");
         assert_eq!(msgs.len(), 1);
         match &msgs[0].content {
-            ChatContent::Rendered(s) => assert!(s.contains("<p>hi</p>")),
+            ChatContent::Rendered(s) => assert!(s.contains("block-text")),
             _ => panic!("expected Rendered"),
         }
     }
@@ -951,7 +1194,8 @@ mod tests {
         assert_eq!(msgs.len(), 1);
         match &msgs[0].content {
             ChatContent::Rendered(html) => {
-                assert!(html.contains("<p>done</p>"));
+                assert!(html.contains("block-text"));
+                assert!(html.contains("done"));
             }
             _ => panic!("expected Rendered"),
         }
