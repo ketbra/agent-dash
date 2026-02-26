@@ -126,6 +126,9 @@ fn detect_suggestion(screen: &vt100::Screen) -> Option<String> {
 /// Two variants exist (Ghostty vs default terminal) plus a reduced-motion
 /// fallback; we match the union of all possible spinner frame characters.
 fn is_spinner_char(s: &str) -> bool {
+    // Note: ● (U+25CF) is intentionally excluded — Claude Code uses it for
+    // completed-action indicators (e.g. "● Pushed successfully.") which would
+    // false-positive when the truncated text contains "…".
     matches!(
         s,
         "·"  // U+00B7 Middle Dot
@@ -135,7 +138,6 @@ fn is_spinner_char(s: &str) -> bool {
         | "✶" // U+2736 Six Pointed Black Star
         | "✻" // U+273B Teardrop-Spoked Asterisk
         | "✽" // U+273D Heavy Teardrop-Spoked Asterisk
-        | "●" // U+25CF Black Circle (reduced motion)
     )
 }
 
@@ -164,9 +166,10 @@ fn detect_thinking_text(screen: &vt100::Screen) -> Option<String> {
             };
             let ch = cell.contents();
             if ch.is_empty() {
-                continue;
+                text.push(' ');
+            } else {
+                text.push_str(ch);
             }
-            text.push_str(ch);
         }
         let trimmed = text.trim();
         // The thinking status line always contains "…" (U+2026) as part of
@@ -792,9 +795,10 @@ mod tests {
     }
 
     #[test]
-    fn detect_thinking_reduced_motion() {
+    fn no_thinking_on_black_circle() {
+        // ● (U+25CF) is used for completed-action indicators, not matched as spinner.
         let result = thinking_from("\u{25CF} Working\u{2026}".as_bytes());
-        assert_eq!(result, Some("\u{25CF} Working\u{2026}".to_string()));
+        assert_eq!(result, None);
     }
 
     #[test]
