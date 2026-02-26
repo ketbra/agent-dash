@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>agent-dash</title>
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
 </head>
 <body>
   <div id="app">
@@ -15,11 +16,19 @@
     <main id="main">
       <div id="permission-banner" class="hidden"></div>
       <div id="messages"></div>
+      <div id="terminal-container" class="hidden">
+        <div id="terminal-header">
+          <span>Terminal Output</span>
+          <button id="terminal-close" type="button">&times;</button>
+        </div>
+        <div id="terminal-view"></div>
+      </div>
       <div id="thinking-indicator" class="hidden"></div>
       <form id="prompt-form" class="hidden">
         <div id="image-previews" class="hidden"></div>
         <div id="prompt-row">
           <input type="text" id="prompt-input" placeholder="Send a prompt... (paste images with Ctrl+V)" autocomplete="off">
+          <button type="button" id="terminal-toggle" title="Toggle terminal output">&#9638;</button>
           <button type="submit">Send</button>
         </div>
         <div id="suggestion" class="hidden"></div>

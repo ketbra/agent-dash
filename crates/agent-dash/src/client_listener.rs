@@ -87,6 +87,20 @@ pub enum ClientMessage {
         session_id: String,
         thinking_text: Option<String>,
     },
+    /// Client wants to watch raw terminal output for a session.
+    WatchTerminal {
+        session_id: String,
+        tx: mpsc::Sender<String>,
+    },
+    /// Client stops watching terminal output for a session.
+    UnwatchTerminal {
+        session_id: String,
+    },
+    /// Wrapper forwarding raw terminal output (base64-encoded).
+    TerminalOutput {
+        session_id: String,
+        data: String,
+    },
 }
 
 /// Run the client listener. Accepts persistent bidirectional connections on
@@ -363,6 +377,24 @@ async fn handle_client_connection(
             }
             ClientRequest::UpdateThinkingText { session_id, thinking_text } => {
                 let _ = tx.send(ClientMessage::UpdateThinkingText { session_id, thinking_text }).await;
+            }
+            ClientRequest::TerminalOutput { session_id, data } => {
+                let _ = tx.send(ClientMessage::TerminalOutput { session_id, data }).await;
+            }
+            ClientRequest::WatchTerminal { session_id } => {
+                let (sub_tx, mut sub_rx) = mpsc::channel::<String>(64);
+                let _ = tx.send(ClientMessage::WatchTerminal { session_id: session_id.clone(), tx: sub_tx }).await;
+                // Stream terminal data until disconnect.
+                while let Some(msg) = sub_rx.recv().await {
+                    if writer.write_all(msg.as_bytes()).await.is_err() {
+                        break;
+                    }
+                }
+                let _ = tx.send(ClientMessage::UnwatchTerminal { session_id }).await;
+                return;
+            }
+            ClientRequest::UnwatchTerminal { session_id } => {
+                let _ = tx.send(ClientMessage::UnwatchTerminal { session_id }).await;
             }
             ClientRequest::SendPrompt { session_id, text, images } => {
                 let (reply_tx, reply_rx) = oneshot::channel();

@@ -11,6 +11,9 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 
+const TERMINAL_PARSER_ROWS: u16 = 50;
+const TERMINAL_PARSER_COLS: u16 = 120;
+
 pub async fn run(web_port: u16) {
     let hook_sock = paths::hook_socket_name();
     let client_sock = paths::client_socket_name();
@@ -49,6 +52,8 @@ pub async fn run(web_port: u16) {
     let mut message_subscribers: HashMap<String, Vec<(String, mpsc::Sender<String>)>> =
         HashMap::new();
     let mut wrapper_channels: HashMap<String, mpsc::Sender<String>> = HashMap::new();
+    let mut terminal_subscribers: HashMap<String, Vec<mpsc::Sender<String>>> = HashMap::new();
+    let mut terminal_parsers: HashMap<String, vt100::Parser> = HashMap::new();
 
     let mut write_interval = tokio::time::interval(Duration::from_millis(500));
     let mut state_dirty = false;
@@ -429,6 +434,8 @@ pub async fn run(web_port: u16) {
                     }
                     ClientMessage::UnregisterWrapper { session_id } => {
                         wrapper_channels.remove(&session_id);
+                        terminal_parsers.remove(&session_id);
+                        terminal_subscribers.remove(&session_id);
                         // Also remove channels for subagents of this wrapper.
                         let sub_ids: Vec<String> = state.sessions.iter()
                             .filter(|(_, s)| s.parent_wrapper_id.as_deref() == Some(&session_id))
@@ -436,6 +443,8 @@ pub async fn run(web_port: u16) {
                             .collect();
                         for id in &sub_ids {
                             wrapper_channels.remove(id);
+                            terminal_parsers.remove(id);
+                            terminal_subscribers.remove(id);
                         }
                         state.remove_wrapper(&session_id);
                         state_dirty = true;
@@ -541,6 +550,65 @@ pub async fn run(web_port: u16) {
                             }
                         };
                         let _ = reply.send(protocol::encode_line(&response).unwrap_or_default());
+                    }
+                    ClientMessage::WatchTerminal { session_id, tx } => {
+                        // Resolve the session key (wrapper or real session).
+                        let canonical = resolve_session_key(&session_id, &state)
+                            .unwrap_or(session_id);
+
+                        // Send screen snapshot for late-joiner.
+                        if let Some(parser) = terminal_parsers.get(&canonical) {
+                            let snapshot = parser.screen().contents_formatted();
+                            if !snapshot.is_empty() {
+                                let b64 = base64::engine::general_purpose::STANDARD.encode(&snapshot);
+                                let event = ServerEvent::TerminalData {
+                                    session_id: canonical.clone(),
+                                    data: b64,
+                                };
+                                if let Ok(line) = protocol::encode_line(&event) {
+                                    let _ = tx.try_send(line);
+                                }
+                            }
+                        }
+
+                        terminal_subscribers
+                            .entry(canonical)
+                            .or_default()
+                            .push(tx);
+                    }
+                    ClientMessage::UnwatchTerminal { session_id } => {
+                        let canonical = resolve_session_key(&session_id, &state)
+                            .unwrap_or(session_id);
+                        terminal_subscribers.remove(&canonical);
+                    }
+                    ClientMessage::TerminalOutput { session_id, data } => {
+                        // Decode and feed to vt100 parser for screen snapshots.
+                        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(&data) {
+                            let parser = terminal_parsers
+                                .entry(session_id.clone())
+                                .or_insert_with(|| vt100::Parser::new(TERMINAL_PARSER_ROWS, TERMINAL_PARSER_COLS, 0));
+                            parser.process(&bytes);
+                        }
+
+                        // Forward to terminal subscribers. Check both exact
+                        // session_id and any wrapper that owns this session.
+                        let wrapper_id = state.sessions.get(&session_id)
+                            .and_then(|s| s.parent_wrapper_id.clone());
+                        let targets = [Some(session_id.clone()), wrapper_id];
+                        for target in targets.iter().flatten() {
+                            if let Some(subs) = terminal_subscribers.get_mut(target) {
+                                let event = ServerEvent::TerminalData {
+                                    session_id: target.clone(),
+                                    data: data.clone(),
+                                };
+                                if let Ok(line) = protocol::encode_line(&event) {
+                                    subs.retain(|tx| tx.try_send(line.clone()).is_ok());
+                                }
+                                if subs.is_empty() {
+                                    terminal_subscribers.remove(target);
+                                }
+                            }
+                        }
                     }
                 }
             }

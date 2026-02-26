@@ -85,8 +85,11 @@ async fn handle_ws(socket: WebSocket, client_tx: mpsc::Sender<ClientMessage>) {
     // Track which session we're watching so we can unwatch on disconnect.
     let watched_session: std::sync::Arc<tokio::sync::Mutex<Option<String>>> =
         std::sync::Arc::new(tokio::sync::Mutex::new(None));
+    let watched_terminal: std::sync::Arc<tokio::sync::Mutex<Option<String>>> =
+        std::sync::Arc::new(tokio::sync::Mutex::new(None));
 
     let watched_clone = watched_session.clone();
+    let watched_term_clone = watched_terminal.clone();
     let client_tx_clone = client_tx.clone();
     let event_tx_clone = event_tx.clone();
 
@@ -213,12 +216,40 @@ async fn handle_ws(socket: WebSocket, client_tx: mpsc::Sender<ClientMessage>) {
                     let _ = event_tx_clone.send(json).await;
                 }
             }
+            ClientRequest::WatchTerminal { session_id } => {
+                // Unwatch previous terminal if any.
+                let mut watched = watched_term_clone.lock().await;
+                if let Some(prev) = watched.take() {
+                    let _ = client_tx_clone
+                        .send(ClientMessage::UnwatchTerminal { session_id: prev })
+                        .await;
+                }
+                *watched = Some(session_id.clone());
+                drop(watched);
+
+                let _ = client_tx_clone
+                    .send(ClientMessage::WatchTerminal {
+                        session_id,
+                        tx: event_tx_clone.clone(),
+                    })
+                    .await;
+            }
+            ClientRequest::UnwatchTerminal { session_id } => {
+                let mut watched = watched_term_clone.lock().await;
+                if watched.as_deref() == Some(&session_id) {
+                    *watched = None;
+                }
+                drop(watched);
+                let _ = client_tx_clone
+                    .send(ClientMessage::UnwatchTerminal { session_id })
+                    .await;
+            }
             // Ignore wrapper-only requests from the web UI.
             _ => {}
         }
     }
 
-    // Clean up: unwatch any session and abort the send task.
+    // Clean up: unwatch any session/terminal and abort the send task.
     let watched = watched_session.lock().await;
     if let Some(session_id) = watched.as_ref() {
         let _ = client_tx
@@ -227,5 +258,15 @@ async fn handle_ws(socket: WebSocket, client_tx: mpsc::Sender<ClientMessage>) {
             })
             .await;
     }
+    drop(watched);
+    let watched_term = watched_terminal.lock().await;
+    if let Some(session_id) = watched_term.as_ref() {
+        let _ = client_tx
+            .send(ClientMessage::UnwatchTerminal {
+                session_id: session_id.clone(),
+            })
+            .await;
+    }
+    drop(watched_term);
     send_task.abort();
 }
