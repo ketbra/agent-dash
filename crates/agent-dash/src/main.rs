@@ -28,6 +28,21 @@ enum Commands {
     Run {
         /// Agent to run (e.g. "claude")
         agent: String,
+        /// Run headless (no terminal I/O, for daemon-spawned sessions)
+        #[arg(long)]
+        headless: bool,
+        /// PTY columns (default: terminal width or 120 in headless mode)
+        #[arg(long)]
+        cols: Option<u16>,
+        /// PTY rows (default: terminal height or 36 in headless mode)
+        #[arg(long)]
+        rows: Option<u16>,
+        /// Session ID override (default: auto-generated)
+        #[arg(long)]
+        session_id: Option<String>,
+        /// Working directory override
+        #[arg(long)]
+        cwd: Option<String>,
         /// Arguments to pass to the agent
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
@@ -154,13 +169,20 @@ async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::Run { agent, args }) => {
+        Some(Commands::Run { agent, headless, cols, rows, session_id, cwd, args }) => {
             let profile = agents::lookup(&agent).unwrap_or_else(|| {
                 eprintln!("Unknown agent: {agent}");
                 eprintln!("Supported agents: claude");
                 std::process::exit(1);
             });
-            let exit_code = wrapper::run(profile, &args);
+            let opts = wrapper::RunOptions {
+                headless,
+                cols,
+                rows,
+                session_id,
+                cwd,
+            };
+            let exit_code = wrapper::run(profile, &args, &opts);
             std::process::exit(exit_code);
         }
         Some(Commands::Daemon { action }) => match action {

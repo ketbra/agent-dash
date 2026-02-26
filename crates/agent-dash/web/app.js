@@ -27,6 +27,7 @@
   const terminalView = document.getElementById('terminal-view');
   const terminalToggle = document.getElementById('terminal-toggle');
   const terminalClose = document.getElementById('terminal-close');
+  const newSessionBtn = document.getElementById('new-session-btn');
 
   // --- WebSocket ---
   function connect() {
@@ -108,6 +109,25 @@
         if (terminalInstance && data.data) {
           var bytes = base64ToUint8Array(data.data);
           terminalInstance.write(bytes);
+        }
+        break;
+      case 'session_created':
+        // Auto-select the newly created session after a short delay
+        // (the wrapper needs time to register with the daemon).
+        if (data.session_id) {
+          var newId = data.session_id;
+          var waitAttempts = 0;
+          var waitForSession = function () {
+            var found = sessions.find(function(s) { return s.session_id === newId; });
+            if (found) {
+              selectSession(newId);
+              showTerminal();
+            } else if (waitAttempts < 20) {
+              waitAttempts++;
+              setTimeout(waitForSession, 250);
+            }
+          };
+          waitForSession();
         }
         break;
       case 'prompt_sent':
@@ -440,10 +460,11 @@
       var fitMod = await import('https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm');
       fitAddon = new fitMod.FitAddon();
       terminalInstance = new xtermMod.Terminal({
-        disableStdin: true,
+        disableStdin: false,
         convertEol: false,
         scrollback: 5000,
         fontSize: 13,
+        cursorBlink: true,
         fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
         theme: {
           background: '#1a1b26',
@@ -471,6 +492,14 @@
       terminalInstance.loadAddon(fitAddon);
       terminalInstance.open(terminalView);
       fitAddon.fit();
+
+      // Forward terminal input to the daemon as raw bytes.
+      terminalInstance.onData(function (data) {
+        if (selectedSessionId) {
+          send({ method: 'terminal_input', session_id: selectedSessionId, data: btoa(data) });
+        }
+      });
+
       xtermLoaded = true;
     } catch (e) {
       console.error('Failed to load xterm.js:', e);
@@ -510,6 +539,11 @@
 
   terminalToggle.onclick = toggleTerminal;
   terminalClose.onclick = hideTerminal;
+
+  // --- New session creation ---
+  newSessionBtn.onclick = function () {
+    send({ method: 'create_session' });
+  };
 
   // Refit terminal on window resize.
   window.addEventListener('resize', function () {

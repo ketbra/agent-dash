@@ -51,7 +51,7 @@ pub async fn run(web_port: u16) {
         .expect("failed to create file watcher");
     let mut message_subscribers: HashMap<String, Vec<(String, mpsc::Sender<String>)>> =
         HashMap::new();
-    let mut wrapper_channels: HashMap<String, mpsc::Sender<String>> = HashMap::new();
+    let mut wrapper_channels: HashMap<String, mpsc::Sender<ServerEvent>> = HashMap::new();
     let mut terminal_subscribers: HashMap<String, Vec<mpsc::Sender<String>>> = HashMap::new();
     let mut terminal_parsers: HashMap<String, vt100::Parser> = HashMap::new();
 
@@ -78,8 +78,8 @@ pub async fn run(web_port: u16) {
                         | HookEvent::SessionEnd { session_id } => session_id,
                     };
                     if !wrapper_channels.contains_key(hook_session_id) {
-                        if let Some(prompt_tx) = wrapper_channels.get(wid) {
-                            wrapper_channels.insert(hook_session_id.clone(), prompt_tx.clone());
+                        if let Some(wtx) = wrapper_channels.get(wid) {
+                            wrapper_channels.insert(hook_session_id.clone(), wtx.clone());
                         }
                     }
                     // Ensure the real session exists (but do NOT mark as
@@ -392,7 +392,7 @@ pub async fn run(web_port: u16) {
                         branch,
                         project_name,
                         real_session_id,
-                        prompt_tx,
+                        wrapper_tx,
                     } => {
                         state.ensure_session(&session_id);
                         if let Some(session) = state.sessions.get_mut(&session_id) {
@@ -408,7 +408,7 @@ pub async fn run(web_port: u16) {
                                 session.project_name = p.clone();
                             }
                         }
-                        wrapper_channels.insert(session_id.clone(), prompt_tx);
+                        wrapper_channels.insert(session_id.clone(), wrapper_tx);
 
                         // On reconnect, re-link the real session_id to this wrapper's channel
                         // and resolve the JSONL path if missing.
@@ -519,7 +519,7 @@ pub async fn run(web_port: u16) {
                         } else {
                             // Try exact match first, then prefix match (user may
                             // pass truncated session IDs from `sessions` output).
-                            let prompt_tx = wrapper_channels.get(&session_id).or_else(|| {
+                            let wrapper_tx = wrapper_channels.get(&session_id).or_else(|| {
                                 let matches: Vec<_> = wrapper_channels
                                     .iter()
                                     .filter(|(k, _)| k.starts_with(&session_id))
@@ -530,8 +530,8 @@ pub async fn run(web_port: u16) {
                                     None
                                 }
                             });
-                            if let Some(prompt_tx) = prompt_tx {
-                                if prompt_tx.try_send(text).is_ok() {
+                            if let Some(wrapper_tx) = wrapper_tx {
+                                if wrapper_tx.try_send(ServerEvent::InjectPrompt { text }).is_ok() {
                                     // Immediately mark the wrapper session as Working so
                                     // the UI shows "thinking..." while Claude processes
                                     // the prompt (before the first ToolStart hook fires).
@@ -610,6 +610,62 @@ pub async fn run(web_port: u16) {
                             }
                         }
                     }
+                    ClientMessage::CreateSession { agent, cwd, cols, rows, reply } => {
+                        let agent_name = agent.unwrap_or_else(|| "claude".into());
+                        let session_id = format!("web-{}", std::process::id() as u64 * 1000 + rand_id());
+
+                        // Spawn a headless wrapper process.
+                        let exe = std::env::current_exe().unwrap_or_else(|_| "agent-dash".into());
+                        let mut cmd = std::process::Command::new(&exe);
+                        cmd.arg("run")
+                            .arg(&agent_name)
+                            .arg("--headless")
+                            .arg("--session-id")
+                            .arg(&session_id);
+
+                        if let Some(ref c) = cwd {
+                            cmd.arg("--cwd").arg(c);
+                        }
+                        if let Some(c) = cols {
+                            cmd.arg("--cols").arg(c.to_string());
+                        }
+                        if let Some(r) = rows {
+                            cmd.arg("--rows").arg(r.to_string());
+                        }
+
+                        cmd.stdin(std::process::Stdio::null())
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::null());
+
+                        let response = match cmd.spawn() {
+                            Ok(_child) => {
+                                ServerEvent::SessionCreated { session_id }
+                            }
+                            Err(e) => {
+                                ServerEvent::Error {
+                                    message: format!("failed to spawn session: {e}"),
+                                }
+                            }
+                        };
+                        let _ = reply.send(protocol::encode_line(&response).unwrap_or_default());
+                    }
+                    ClientMessage::TerminalInput { session_id, data } => {
+                        // Forward raw bytes to the wrapper's PTY via TerminalWrite event.
+                        let wrapper_tx = wrapper_channels.get(&session_id).or_else(|| {
+                            let matches: Vec<_> = wrapper_channels
+                                .iter()
+                                .filter(|(k, _)| k.starts_with(&session_id))
+                                .collect();
+                            if matches.len() == 1 {
+                                Some(matches[0].1)
+                            } else {
+                                None
+                            }
+                        });
+                        if let Some(wrapper_tx) = wrapper_tx {
+                            let _ = wrapper_tx.try_send(ServerEvent::TerminalWrite { data });
+                        }
+                    }
                 }
             }
 
@@ -683,6 +739,16 @@ fn broadcast_to_subscribers<T: serde::Serialize>(
         return;
     };
     subscribers.retain(|tx| tx.try_send(line.clone()).is_ok());
+}
+
+/// Generate a simple random numeric ID for session naming.
+fn rand_id() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros() as u64
+        % 1_000_000
 }
 
 /// Resolve a possibly-truncated session ID to the canonical key in
