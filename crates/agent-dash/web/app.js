@@ -282,14 +282,28 @@
     let html =
       '<div class="perm-info">' +
       '<div class="perm-tool">' + escapeHtml(perm.tool) + '</div>' +
-      '<div class="perm-detail">' + escapeHtml(perm.detail) + '</div>' +
+      (function () {
+        var parts = (perm.detail || '').split('\n');
+        var cmd = parts[0] || '';
+        var desc = parts.slice(1).join('\n');
+        var h = '<div class="perm-detail">' + escapeHtml(cmd) + '</div>';
+        if (desc) h += '<div class="perm-desc">' + escapeHtml(desc) + '</div>';
+        return h;
+      })() +
       '</div>' +
       '<button class="btn-allow" onclick="window._permAllow()">Allow</button>' +
       '<button class="btn-deny" onclick="window._permDeny()">Deny</button>';
 
     if (perm.suggestions && perm.suggestions.length > 0) {
       perm.suggestions.forEach(function (s, i) {
-        const label = s.type === 'toolAlwaysAllow' ? 'Always allow ' + (s.tool || 'this tool') : 'Allow similar';
+        var label;
+        if (s.type === 'toolAlwaysAllow') {
+          label = 'Always allow ' + (s.tool || 'this tool');
+        } else if (s.type === 'pathAlwaysAllow') {
+          label = 'Always allow ' + (s.path || 'this path');
+        } else {
+          label = 'Allow similar';
+        }
         html += ' <button class="btn-suggestion" onclick="window._permSuggest(' + i + ')">' + escapeHtml(label) + '</button>';
       });
     }
