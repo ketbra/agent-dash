@@ -100,8 +100,6 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 #messages .msg-user {
   color: var(--accent);
   margin-bottom: 12px;
-  padding-left: 16px;
-  border-left: 2px solid var(--accent);
 }
 #messages .msg-assistant { color: var(--text); margin-bottom: 12px; }
 #messages strong { color: var(--yellow); }
