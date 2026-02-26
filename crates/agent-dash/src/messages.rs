@@ -215,6 +215,16 @@ fn extract_tool_detail(name: &str, input: &Option<Value>) -> String {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
+        "TaskCreate" => obj
+            .get("subject")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        "TaskUpdate" => obj
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
         "Task" | "Skill" => obj
             .get("description")
             .or_else(|| obj.get("skill"))
@@ -373,23 +383,83 @@ fn render_html(role: &str, blocks: &[ContentBlock]) -> String {
                     ));
                 }
             }
-            ContentBlock::ToolUse { name, detail, .. } => {
-                let escaped_name = escape_html(name);
-                if detail.is_empty() {
+            ContentBlock::ToolUse { name, detail, input } => {
+                if name == "TaskCreate" {
+                    let subject = input
+                        .as_ref()
+                        .and_then(|v| v.get("subject"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(detail.as_str());
                     html.push_str(&format!(
-                        "<div class=\"block-tool-use\">\u{2022} <strong>{}</strong></div>",
-                        escaped_name
+                        "<div class=\"task-item task-pending\">\u{25FB} <span class=\"task-subject\">{}</span></div>",
+                        escape_html(subject)
+                    ));
+                } else if name == "TaskUpdate" {
+                    let status = input
+                        .as_ref()
+                        .and_then(|v| v.get("status"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let (icon, css_class) = task_status_icon(status);
+                    let label = input
+                        .as_ref()
+                        .and_then(|v| v.get("subject"))
+                        .and_then(|v| v.as_str())
+                        .or_else(|| {
+                            input
+                                .as_ref()
+                                .and_then(|v| v.get("taskId"))
+                                .and_then(|v| v.as_str())
+                                .map(|id| {
+                                    // We can't return a formatted string from this closure
+                                    // directly, so we'll handle it below
+                                    id
+                                })
+                        });
+                    let display = match label {
+                        Some(text) => {
+                            // Check if it looks like a task ID (numeric) vs a subject
+                            if text.chars().all(|c| c.is_ascii_digit()) {
+                                format!("Task #{}", text)
+                            } else {
+                                text.to_string()
+                            }
+                        }
+                        None => "Task".to_string(),
+                    };
+                    html.push_str(&format!(
+                        "<div class=\"task-item {}\">{} <span class=\"task-subject\">{}</span></div>",
+                        css_class, icon, escape_html(&display)
                     ));
                 } else {
-                    let truncated = truncate_detail(detail, DETAIL_MAX_LEN);
-                    let escaped_detail = escape_html(&truncated);
-                    html.push_str(&format!(
-                        "<div class=\"block-tool-use\">\u{2022} <strong>{}</strong>(<span class=\"tool-detail\">{}</span>)</div>",
-                        escaped_name, escaped_detail
-                    ));
+                    let escaped_name = escape_html(name);
+                    if detail.is_empty() {
+                        html.push_str(&format!(
+                            "<div class=\"block-tool-use\">\u{2022} <strong>{}</strong></div>",
+                            escaped_name
+                        ));
+                    } else {
+                        let truncated = truncate_detail(detail, DETAIL_MAX_LEN);
+                        let escaped_detail = escape_html(&truncated);
+                        html.push_str(&format!(
+                            "<div class=\"block-tool-use\">\u{2022} <strong>{}</strong>(<span class=\"tool-detail\">{}</span>)</div>",
+                            escaped_name, escaped_detail
+                        ));
+                    }
                 }
             }
-            ContentBlock::ToolResult { output, .. } => {
+            ContentBlock::ToolResult { name, output } => {
+                // Suppress noisy task tool results
+                if name == "TaskCreate" || name == "TaskUpdate" || name == "TaskGet" {
+                    continue;
+                }
+                // Render TaskList results as a formatted task list
+                if name == "TaskList" {
+                    if let Some(output) = output {
+                        html.push_str(&render_task_list_result(output));
+                    }
+                    continue;
+                }
                 if let Some(output) = output {
                     let lines: Vec<&str> = output.lines().collect();
                     let total = lines.len();
@@ -438,6 +508,54 @@ fn render_html(role: &str, blocks: &[ContentBlock]) -> String {
         }
     }
 
+    html
+}
+
+/// Map a task status string to its icon character and CSS class.
+fn task_status_icon(status: &str) -> (&'static str, &'static str) {
+    match status {
+        "completed" => ("\u{2714}", "task-completed"),    // ✔
+        "in_progress" => ("\u{25FC}", "task-in_progress"), // ◼
+        _ => ("\u{25FB}", "task-pending"),                 // ◻
+    }
+}
+
+/// Parse a TaskList tool result and render as HTML with status icons.
+///
+/// Each line is expected to look like: `#N [status] Subject text`
+fn render_task_list_result(output: &str) -> String {
+    let mut html = String::from("<div class=\"task-list\">");
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // Try to parse: #N [status] Subject
+        if let Some(rest) = trimmed.strip_prefix('#') {
+            // Skip the number portion
+            if let Some(after_num) = rest.find(' ') {
+                let after = &rest[after_num + 1..];
+                if after.starts_with('[') {
+                    if let Some(close) = after.find(']') {
+                        let status = &after[1..close];
+                        let subject = after[close + 1..].trim();
+                        let (icon, css_class) = task_status_icon(status);
+                        html.push_str(&format!(
+                            "<div class=\"task-item {}\">{} <span class=\"task-subject\">{}</span></div>",
+                            css_class, icon, escape_html(subject)
+                        ));
+                        continue;
+                    }
+                }
+            }
+        }
+        // Fallback: render as plain text
+        html.push_str(&format!(
+            "<div class=\"task-item\">{}</div>",
+            escape_html(trimmed)
+        ));
+    }
+    html.push_str("</div>");
     html
 }
 
@@ -1222,5 +1340,95 @@ mod tests {
             }
             _ => panic!("expected Rendered"),
         }
+    }
+
+    // -- Task tool rendering -------------------------------------------------
+
+    #[test]
+    fn html_task_create_renders_pending_icon() {
+        let blocks = vec![ContentBlock::ToolUse {
+            name: "TaskCreate".into(),
+            detail: "Fix auth bug".into(),
+            input: Some(serde_json::json!({"subject": "Fix auth bug", "description": "Details"})),
+        }];
+        let html = render_html("assistant", &blocks);
+        assert!(html.contains("\u{25FB}")); // ◻
+        assert!(html.contains("Fix auth bug"));
+        assert!(html.contains("task-pending"));
+    }
+
+    #[test]
+    fn html_task_update_completed_icon() {
+        let blocks = vec![ContentBlock::ToolUse {
+            name: "TaskUpdate".into(),
+            detail: "completed".into(),
+            input: Some(serde_json::json!({"taskId": "1", "status": "completed"})),
+        }];
+        let html = render_html("assistant", &blocks);
+        assert!(html.contains("\u{2714}")); // ✔
+        assert!(html.contains("Task #1"));
+        assert!(html.contains("task-completed"));
+    }
+
+    #[test]
+    fn html_task_update_in_progress_icon() {
+        let blocks = vec![ContentBlock::ToolUse {
+            name: "TaskUpdate".into(),
+            detail: "in_progress".into(),
+            input: Some(serde_json::json!({"taskId": "2", "status": "in_progress"})),
+        }];
+        let html = render_html("assistant", &blocks);
+        assert!(html.contains("\u{25FC}")); // ◼
+        assert!(html.contains("Task #2"));
+        assert!(html.contains("task-in_progress"));
+    }
+
+    #[test]
+    fn html_task_update_with_subject() {
+        let blocks = vec![ContentBlock::ToolUse {
+            name: "TaskUpdate".into(),
+            detail: "in_progress".into(),
+            input: Some(serde_json::json!({"taskId": "3", "status": "in_progress", "subject": "Add tests"})),
+        }];
+        let html = render_html("assistant", &blocks);
+        assert!(html.contains("Add tests"));
+        assert!(!html.contains("Task #3")); // subject takes precedence
+    }
+
+    #[test]
+    fn html_task_list_result_renders_icons() {
+        let output = "#1 [completed] Add protocol variant\n#2 [in_progress] Add thinking field\n#3 [pending] Update client";
+        let blocks = vec![ContentBlock::ToolResult {
+            name: "TaskList".into(),
+            output: Some(output.into()),
+        }];
+        let html = render_html("assistant", &blocks);
+        assert!(html.contains("task-list"));
+        assert!(html.contains("\u{2714}")); // ✔ completed
+        assert!(html.contains("\u{25FC}")); // ◼ in_progress
+        assert!(html.contains("\u{25FB}")); // ◻ pending
+        assert!(html.contains("Add protocol variant"));
+        assert!(html.contains("Add thinking field"));
+        assert!(html.contains("Update client"));
+    }
+
+    #[test]
+    fn html_task_create_result_suppressed() {
+        let blocks = vec![ContentBlock::ToolResult {
+            name: "TaskCreate".into(),
+            output: Some("Task #1 created successfully".into()),
+        }];
+        let html = render_html("assistant", &blocks);
+        assert!(html.is_empty());
+    }
+
+    #[test]
+    fn html_task_update_result_suppressed() {
+        let blocks = vec![ContentBlock::ToolResult {
+            name: "TaskUpdate".into(),
+            output: Some("Updated task #1 status".into()),
+        }];
+        let html = render_html("assistant", &blocks);
+        assert!(html.is_empty());
     }
 }

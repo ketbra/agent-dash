@@ -140,6 +140,13 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   overflow-y: auto;
 }
 
+.task-list { margin: 4px 0; }
+.task-item { margin: 2px 0; font-size: 13px; line-height: 1.5; }
+.task-completed { color: var(--green); opacity: 0.6; }
+.task-completed .task-subject { text-decoration: line-through; }
+.task-in_progress { color: #d77757; font-weight: bold; }
+.task-pending { color: var(--text-dim); }
+
 #prompt-form {
   display: flex;
   flex-direction: column;
