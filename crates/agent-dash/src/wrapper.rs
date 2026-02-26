@@ -234,9 +234,35 @@ fn ensure_daemon() -> bool {
     false
 }
 
+/// Options for running a wrapper session.
+pub struct RunOptions {
+    /// Run without a controlling terminal (for daemon-spawned sessions).
+    pub headless: bool,
+    /// Override PTY columns (defaults to terminal width or 120 in headless mode).
+    pub cols: Option<u16>,
+    /// Override PTY rows (defaults to terminal height or 36 in headless mode).
+    pub rows: Option<u16>,
+    /// Override session ID (defaults to "wrap-{pid}").
+    pub session_id: Option<String>,
+    /// Override working directory.
+    pub cwd: Option<String>,
+}
+
+impl Default for RunOptions {
+    fn default() -> Self {
+        Self {
+            headless: false,
+            cols: None,
+            rows: None,
+            session_id: None,
+            cwd: None,
+        }
+    }
+}
+
 /// Run an agent inside a PTY wrapper.
 /// Blocks until the child process exits. Returns the exit code.
-pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
+pub fn run(profile: &AgentProfile, args: &[String], opts: &RunOptions) -> i32 {
     // Check that the agent binary exists in PATH.
     if which(profile.binary).is_none() {
         eprintln!(
@@ -254,8 +280,13 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
         eprintln!("agent-dash hooks not installed. Run `agent-dash setup hooks` to install.");
     }
 
-    // Get current terminal size.
-    let (cols, rows) = terminal::size().unwrap_or((80, 24));
+    // Determine PTY size.
+    let (cols, rows) = if opts.headless {
+        (opts.cols.unwrap_or(120), opts.rows.unwrap_or(36))
+    } else {
+        let (tc, tr) = terminal::size().unwrap_or((80, 24));
+        (opts.cols.unwrap_or(tc), opts.rows.unwrap_or(tr))
+    };
 
     // Create the PTY.
     let pty_system = native_pty_system();
@@ -269,11 +300,16 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
         .expect("failed to open pty");
 
     // Generate wrapper session ID for daemon registration.
-    let session_id = format!("wrap-{}", std::process::id());
+    let session_id = opts
+        .session_id
+        .clone()
+        .unwrap_or_else(|| format!("wrap-{}", std::process::id()));
 
-    // Build the command with the current working directory.
+    // Build the command with the working directory.
     let mut cmd = CommandBuilder::new(profile.binary);
-    if let Ok(cwd) = std::env::current_dir() {
+    if let Some(ref cwd) = opts.cwd {
+        cmd.cwd(std::path::Path::new(cwd));
+    } else if let Ok(cwd) = std::env::current_dir() {
         cmd.cwd(cwd);
     }
     // Pass wrapper ID so hooks can link the real session ID back to us.
@@ -303,9 +339,16 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
     let daemon_conn = try_connect_daemon();
 
     if let Some(ref conn) = daemon_conn {
-        let cwd = std::env::current_dir().ok();
-        let branch = cwd.as_ref().map(|d| git_branch(d)).unwrap_or_default();
-        let project_name = cwd
+        let effective_cwd = opts
+            .cwd
+            .as_ref()
+            .map(|c| std::path::PathBuf::from(c))
+            .or_else(|| std::env::current_dir().ok());
+        let branch = effective_cwd
+            .as_ref()
+            .map(|d| git_branch(d))
+            .unwrap_or_default();
+        let project_name = effective_cwd
             .as_ref()
             .and_then(|d| d.file_name())
             .and_then(|n| n.to_str())
@@ -314,7 +357,7 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
         let req = ClientRequest::RegisterWrapper {
             session_id: session_id.clone(),
             agent: profile.name.to_string(),
-            cwd: cwd.map(|d| d.to_string_lossy().to_string()),
+            cwd: effective_cwd.map(|d| d.to_string_lossy().to_string()),
             branch: Some(branch),
             project_name: Some(project_name),
             real_session_id: None,
@@ -322,8 +365,10 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
         let _ = send_to_daemon(conn, &req);
     }
 
-    // Enter raw mode so keypresses flow immediately.
-    let _ = terminal::enable_raw_mode();
+    // Enter raw mode so keypresses flow immediately (skip in headless mode).
+    if !opts.headless {
+        let _ = terminal::enable_raw_mode();
+    }
     let running = Arc::new(AtomicBool::new(true));
 
     // Channel for multiplexing stdin + injected prompts into the PTY writer.
@@ -349,24 +394,28 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
         })
     };
 
-    // --- Stdin thread: reads user input, sends to writer channel ---
-    let write_tx_stdin = write_tx.clone();
-    let running_stdin = running.clone();
-    let stdin_handle = std::thread::spawn(move || {
-        let stdin = std::io::stdin();
-        let mut buf = [0u8; 1024];
-        while running_stdin.load(Ordering::Relaxed) {
-            match stdin.lock().read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    if write_tx_stdin.send(buf[..n].to_vec()).is_err() {
-                        break;
+    // --- Stdin thread: reads user input, sends to writer channel (skip in headless mode) ---
+    let stdin_handle = if !opts.headless {
+        let write_tx_stdin = write_tx.clone();
+        let running_stdin = running.clone();
+        Some(std::thread::spawn(move || {
+            let stdin = std::io::stdin();
+            let mut buf = [0u8; 1024];
+            while running_stdin.load(Ordering::Relaxed) {
+                match stdin.lock().read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if write_tx_stdin.send(buf[..n].to_vec()).is_err() {
+                            break;
+                        }
                     }
+                    Err(_) => break,
                 }
-                Err(_) => break,
             }
-        }
-    });
+        }))
+    } else {
+        None
+    };
 
     // Shared terminal size for vt100 parser.
     let term_size = Arc::new(AtomicTermSize::new(cols, rows));
@@ -377,13 +426,14 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
     // Channel for forwarding raw terminal output to the daemon (for web viewers).
     let (term_data_tx, term_data_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(64);
 
-    // --- PTY reader thread: reads agent output, writes to stdout ---
+    // --- PTY reader thread: reads agent output, writes to stdout (or discards in headless) ---
     let running_reader = running.clone();
     let term_size_reader = term_size.clone();
+    let headless = opts.headless;
     let reader_handle = {
         let mut pty_reader = pty_reader;
         std::thread::spawn(move || {
-            let mut stdout = std::io::stdout();
+            let mut stdout = if !headless { Some(std::io::stdout()) } else { None };
             let mut buf = [0u8; 4096];
             let mut parser = vt100::Parser::new(rows, cols, 0);
             let mut last_update = ScreenUpdate { suggestion: None, thinking_text: None };
@@ -395,10 +445,13 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
                 match pty_reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        if stdout.write_all(&buf[..n]).is_err() {
-                            break;
+                        // Write to stdout only when not headless.
+                        if let Some(ref mut out) = stdout {
+                            if out.write_all(&buf[..n]).is_err() {
+                                break;
+                            }
+                            let _ = out.flush();
                         }
-                        let _ = stdout.flush();
 
                         // Forward raw bytes to terminal data channel for web viewers.
                         let _ = term_data_tx.try_send(buf[..n].to_vec());
@@ -512,7 +565,7 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
         });
     }
 
-    // --- Daemon listener thread: listens for inject_prompt commands ---
+    // --- Daemon listener thread: listens for inject_prompt and terminal_write commands ---
     // Reconnects automatically if the daemon restarts.
     if let Some(conn) = daemon_conn {
         let write_tx_inject = write_tx.clone();
@@ -520,6 +573,7 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
         let session_id_daemon = session_id.clone();
         let agent_name = profile.name.to_string();
         std::thread::spawn(move || {
+            let engine = base64::engine::general_purpose::STANDARD;
             let mut conn = conn;
             loop {
                 // Read events from daemon using a cloned stream so the
@@ -536,14 +590,24 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
                         }
                         let Ok(line) = line else { break };
                         if let Ok(event) = serde_json::from_str::<ServerEvent>(&line) {
-                            if let ServerEvent::InjectPrompt { text } = event {
-                                if write_tx_inject.send(text.into_bytes()).is_err() {
-                                    return;
+                            match event {
+                                ServerEvent::InjectPrompt { text } => {
+                                    if write_tx_inject.send(text.into_bytes()).is_err() {
+                                        return;
+                                    }
+                                    std::thread::sleep(std::time::Duration::from_millis(50));
+                                    if write_tx_inject.send(vec![b'\r']).is_err() {
+                                        return;
+                                    }
                                 }
-                                std::thread::sleep(std::time::Duration::from_millis(50));
-                                if write_tx_inject.send(vec![b'\r']).is_err() {
-                                    return;
+                                ServerEvent::TerminalWrite { data } => {
+                                    if let Ok(bytes) = engine.decode(&data) {
+                                        if write_tx_inject.send(bytes).is_err() {
+                                            return;
+                                        }
+                                    }
                                 }
+                                _ => {}
                             }
                         }
                     }
@@ -592,8 +656,8 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
         });
     }
 
-    // --- Resize thread: periodically checks terminal size ---
-    {
+    // --- Resize thread: periodically checks terminal size (skip in headless mode) ---
+    if !headless {
         let master = pair.master;
         let running_resize = running.clone();
         let term_size_resize = term_size;
@@ -618,14 +682,27 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
                 }
             }
         });
+    } else {
+        // In headless mode, we still need to keep pair.master alive to
+        // prevent the PTY from closing.
+        let _master = pair.master;
+        let running_headless = running.clone();
+        std::thread::spawn(move || {
+            while running_headless.load(Ordering::Relaxed) {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            drop(_master);
+        });
     }
 
     // Wait for the child process to exit.
     let status = child.wait().expect("failed to wait on child");
     running.store(false, Ordering::Relaxed);
 
-    // Restore terminal.
-    let _ = terminal::disable_raw_mode();
+    // Restore terminal (skip in headless mode).
+    if !headless {
+        let _ = terminal::disable_raw_mode();
+    }
 
     // Unregister from daemon.
     if let Some(conn) = try_connect_daemon() {

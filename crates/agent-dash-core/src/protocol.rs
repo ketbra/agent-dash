@@ -154,6 +154,22 @@ pub enum ClientRequest {
         session_id: String,
         data: String, // base64-encoded raw PTY bytes
     },
+    #[serde(rename = "create_session")]
+    CreateSession {
+        #[serde(default)]
+        agent: Option<String>,
+        #[serde(default)]
+        cwd: Option<String>,
+        #[serde(default)]
+        cols: Option<u16>,
+        #[serde(default)]
+        rows: Option<u16>,
+    },
+    #[serde(rename = "terminal_input")]
+    TerminalInput {
+        session_id: String,
+        data: String, // base64-encoded raw bytes
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +222,14 @@ pub enum ServerEvent {
     TerminalData {
         session_id: String,
         data: String, // base64-encoded raw PTY bytes
+    },
+    #[serde(rename = "terminal_write")]
+    TerminalWrite {
+        data: String, // base64-encoded raw bytes to write to PTY
+    },
+    #[serde(rename = "session_created")]
+    SessionCreated {
+        session_id: String,
     },
     #[serde(rename = "error")]
     Error {
@@ -827,5 +851,66 @@ mod tests {
         let decoded: HookEnvelope = serde_json::from_str(json).unwrap();
         assert!(decoded.wrapper_id.is_none());
         assert!(matches!(decoded.event, HookEvent::Stop { .. }));
+    }
+
+    // -- CreateSession / TerminalInput --
+
+    #[test]
+    fn deserialize_create_session_defaults() {
+        let json = r#"{"method":"create_session"}"#;
+        let req: ClientRequest = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequest::CreateSession { agent, cwd, cols, rows } => {
+                assert!(agent.is_none());
+                assert!(cwd.is_none());
+                assert!(cols.is_none());
+                assert!(rows.is_none());
+            }
+            _ => panic!("expected CreateSession"),
+        }
+    }
+
+    #[test]
+    fn deserialize_create_session_with_options() {
+        let json = r#"{"method":"create_session","agent":"claude","cwd":"/home/user/project","cols":120,"rows":36}"#;
+        let req: ClientRequest = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequest::CreateSession { agent, cwd, cols, rows } => {
+                assert_eq!(agent.as_deref(), Some("claude"));
+                assert_eq!(cwd.as_deref(), Some("/home/user/project"));
+                assert_eq!(cols, Some(120));
+                assert_eq!(rows, Some(36));
+            }
+            _ => panic!("expected CreateSession"),
+        }
+    }
+
+    #[test]
+    fn deserialize_terminal_input() {
+        let json = r#"{"method":"terminal_input","session_id":"s1","data":"aGVsbG8="}"#;
+        let req: ClientRequest = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequest::TerminalInput { session_id, data } => {
+                assert_eq!(session_id, "s1");
+                assert_eq!(data, "aGVsbG8=");
+            }
+            _ => panic!("expected TerminalInput"),
+        }
+    }
+
+    #[test]
+    fn serialize_session_created() {
+        let event = ServerEvent::SessionCreated { session_id: "web-123".into() };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"event\":\"session_created\""));
+        assert!(json.contains("\"session_id\":\"web-123\""));
+    }
+
+    #[test]
+    fn serialize_terminal_write() {
+        let event = ServerEvent::TerminalWrite { data: "aGVsbG8=".into() };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"event\":\"terminal_write\""));
+        assert!(json.contains("\"data\":\"aGVsbG8=\""));
     }
 }

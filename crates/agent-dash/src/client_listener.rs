@@ -64,7 +64,7 @@ pub enum ClientMessage {
         branch: Option<String>,
         project_name: Option<String>,
         real_session_id: Option<String>,
-        prompt_tx: mpsc::Sender<String>,
+        wrapper_tx: mpsc::Sender<ServerEvent>,
     },
     /// Wrapper unregistering.
     UnregisterWrapper {
@@ -98,6 +98,19 @@ pub enum ClientMessage {
     },
     /// Wrapper forwarding raw terminal output (base64-encoded).
     TerminalOutput {
+        session_id: String,
+        data: String,
+    },
+    /// Client requests creation of a new headless session.
+    CreateSession {
+        agent: Option<String>,
+        cwd: Option<String>,
+        cols: Option<u16>,
+        rows: Option<u16>,
+        reply: oneshot::Sender<String>,
+    },
+    /// Client sending raw terminal input (base64-encoded).
+    TerminalInput {
         session_id: String,
         data: String,
     },
@@ -303,8 +316,8 @@ async fn handle_client_connection(
                 }
             }
             ClientRequest::RegisterWrapper { session_id, agent, cwd, branch, project_name, real_session_id } => {
-                // Create a channel for prompt injection.
-                let (prompt_tx, mut prompt_rx) = mpsc::channel::<String>(16);
+                // Create a channel for wrapper commands (prompt injection, terminal input, etc).
+                let (wrapper_tx, mut wrapper_rx) = mpsc::channel::<ServerEvent>(16);
                 let _ = tx
                     .send(ClientMessage::RegisterWrapper {
                         session_id: session_id.clone(),
@@ -313,25 +326,24 @@ async fn handle_client_connection(
                         branch,
                         project_name,
                         real_session_id,
-                        prompt_tx,
+                        wrapper_tx,
                     })
                     .await;
 
-                // Stream prompts to this wrapper while also monitoring the
+                // Stream events to this wrapper while also monitoring the
                 // client reader for disconnect (EOF) or explicit messages.
                 loop {
                     tokio::select! {
-                        prompt = prompt_rx.recv() => {
-                            match prompt {
-                                Some(text) => {
-                                    let event = ServerEvent::InjectPrompt { text };
+                        event = wrapper_rx.recv() => {
+                            match event {
+                                Some(event) => {
                                     if let Ok(line) = protocol::encode_line(&event) {
                                         if writer.write_all(line.as_bytes()).await.is_err() {
                                             break;
                                         }
                                     }
                                 }
-                                None => break, // daemon dropped prompt channel
+                                None => break, // daemon dropped wrapper channel
                             }
                         }
                         line_result = lines.next_line() => {
@@ -409,6 +421,26 @@ async fn handle_client_connection(
                 if let Ok(json) = reply_rx.await {
                     let _ = writer.write_all(json.as_bytes()).await;
                 }
+            }
+            ClientRequest::CreateSession { agent, cwd, cols, rows } => {
+                let (reply_tx, reply_rx) = oneshot::channel();
+                let _ = tx
+                    .send(ClientMessage::CreateSession {
+                        agent,
+                        cwd,
+                        cols,
+                        rows,
+                        reply: reply_tx,
+                    })
+                    .await;
+                if let Ok(json) = reply_rx.await {
+                    let _ = writer.write_all(json.as_bytes()).await;
+                }
+            }
+            ClientRequest::TerminalInput { session_id, data } => {
+                let _ = tx
+                    .send(ClientMessage::TerminalInput { session_id, data })
+                    .await;
             }
         }
     }

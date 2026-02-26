@@ -244,6 +244,26 @@ async fn handle_ws(socket: WebSocket, client_tx: mpsc::Sender<ClientMessage>) {
                     .send(ClientMessage::UnwatchTerminal { session_id })
                     .await;
             }
+            ClientRequest::CreateSession { agent, cwd, cols, rows } => {
+                let (reply_tx, reply_rx) = oneshot::channel();
+                let _ = client_tx_clone
+                    .send(ClientMessage::CreateSession {
+                        agent,
+                        cwd,
+                        cols,
+                        rows,
+                        reply: reply_tx,
+                    })
+                    .await;
+                if let Ok(json) = reply_rx.await {
+                    let _ = event_tx_clone.send(json).await;
+                }
+            }
+            ClientRequest::TerminalInput { session_id, data } => {
+                let _ = client_tx_clone
+                    .send(ClientMessage::TerminalInput { session_id, data })
+                    .await;
+            }
             // Ignore wrapper-only requests from the web UI.
             _ => {}
         }
