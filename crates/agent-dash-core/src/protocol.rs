@@ -136,6 +136,11 @@ pub enum ClientRequest {
         session_id: String,
         suggestion: Option<String>,
     },
+    #[serde(rename = "update_thinking_text")]
+    UpdateThinkingText {
+        session_id: String,
+        thinking_text: Option<String>,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -710,6 +715,31 @@ mod tests {
     }
 
     // -- HookEnvelope round-trip (flattened serde) --
+
+    #[test]
+    fn deserialize_update_thinking_text() {
+        let json = r#"{"method":"update_thinking_text","session_id":"s1","thinking_text":"· Pouncing… (thinking)"}"#;
+        let req: ClientRequest = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequest::UpdateThinkingText { session_id, thinking_text } => {
+                assert_eq!(session_id, "s1");
+                assert_eq!(thinking_text.as_deref(), Some("· Pouncing… (thinking)"));
+            }
+            _ => panic!("expected UpdateThinkingText"),
+        }
+    }
+
+    #[test]
+    fn deserialize_update_thinking_text_null() {
+        let json = r#"{"method":"update_thinking_text","session_id":"s1","thinking_text":null}"#;
+        let req: ClientRequest = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequest::UpdateThinkingText { thinking_text, .. } => {
+                assert!(thinking_text.is_none());
+            }
+            _ => panic!("expected UpdateThinkingText"),
+        }
+    }
 
     #[test]
     fn hook_envelope_round_trip_without_wrapper_id() {

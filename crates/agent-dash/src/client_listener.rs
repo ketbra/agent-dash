@@ -82,6 +82,11 @@ pub enum ClientMessage {
         session_id: String,
         suggestion: Option<String>,
     },
+    /// Wrapper updating thinking text for a session.
+    UpdateThinkingText {
+        session_id: String,
+        thinking_text: Option<String>,
+    },
 }
 
 /// Run the client listener. Accepts persistent bidirectional connections on
@@ -329,6 +334,9 @@ async fn handle_client_connection(
                                             Ok(ClientRequest::UpdateSuggestion { session_id, suggestion }) => {
                                                 let _ = tx.send(ClientMessage::UpdateSuggestion { session_id, suggestion }).await;
                                             }
+                                            Ok(ClientRequest::UpdateThinkingText { session_id, thinking_text }) => {
+                                                let _ = tx.send(ClientMessage::UpdateThinkingText { session_id, thinking_text }).await;
+                                            }
                                             _ => {}
                                         }
                                     }
@@ -352,6 +360,9 @@ async fn handle_client_connection(
             }
             ClientRequest::UpdateSuggestion { session_id, suggestion } => {
                 let _ = tx.send(ClientMessage::UpdateSuggestion { session_id, suggestion }).await;
+            }
+            ClientRequest::UpdateThinkingText { session_id, thinking_text } => {
+                let _ = tx.send(ClientMessage::UpdateThinkingText { session_id, thinking_text }).await;
             }
             ClientRequest::SendPrompt { session_id, text, images } => {
                 let (reply_tx, reply_rx) = oneshot::channel();

@@ -55,6 +55,8 @@ pub struct DashSession {
     pub subagent_count: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_suggestion: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_text: Option<String>,
 }
 
 /// Why a session needs input.
@@ -128,6 +130,7 @@ mod tests {
             active_tool: None,
             subagent_count: 0,
             prompt_suggestion: None,
+            thinking_text: None,
         };
         let json = serde_json::to_string(&ds).unwrap();
         assert!(json.contains("\"status\":\"idle\""));
@@ -153,6 +156,7 @@ mod tests {
             }),
             subagent_count: 0,
             prompt_suggestion: None,
+            thinking_text: None,
         };
         let json = serde_json::to_string(&ds).unwrap();
         assert!(json.contains("\"name\":\"Bash\""));
@@ -189,6 +193,7 @@ mod tests {
             active_tool: None,
             subagent_count: 0,
             prompt_suggestion: None,
+            thinking_text: None,
         };
         let json = serde_json::to_string(&ds).unwrap();
         let parsed: DashSession = serde_json::from_str(&json).unwrap();

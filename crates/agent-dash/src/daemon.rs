@@ -453,6 +453,18 @@ pub async fn run(web_port: u16) {
                             }
                         }
                     }
+                    ClientMessage::UpdateThinkingText {
+                        session_id,
+                        thinking_text,
+                    } => {
+                        if let Some(session) = state.sessions.get_mut(&session_id) {
+                            if session.thinking_text != thinking_text {
+                                session.thinking_text = thinking_text;
+                                state_dirty = true;
+                                broadcast_state(&mut subscribers, &state);
+                            }
+                        }
+                    }
                     ClientMessage::SendPrompt {
                         session_id,
                         text,
@@ -720,6 +732,7 @@ mod tests {
             parent_wrapper_id: None,
             agent: None,
             prompt_suggestion: None,
+            thinking_text: None,
         }
     }
 

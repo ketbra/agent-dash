@@ -17,6 +17,7 @@
   const permBanner = document.getElementById('permission-banner');
   const imagePreviewsEl = document.getElementById('image-previews');
   const suggestionEl = document.getElementById('suggestion');
+  const thinkingEl = document.getElementById('thinking-indicator');
 
   // --- WebSocket ---
   function connect() {
@@ -68,6 +69,7 @@
         renderSessions();
         updatePermissions();
         updateSuggestion();
+        updateThinking();
         break;
       case 'messages':
         renderMessages(data.messages || []);
@@ -146,6 +148,7 @@
     promptForm.classList.remove('hidden');
     updatePermissions();
     updateSuggestion();
+    updateThinking();
 
     // Fetch history then start watching
     send({ method: 'get_messages', session_id: id, format: 'html', limit: 100 });
@@ -361,6 +364,21 @@
       suggestionEl.classList.remove('hidden');
     } else {
       suggestionEl.classList.add('hidden');
+    }
+  }
+
+  // --- Thinking indicator ---
+  function updateThinking() {
+    if (!selectedSessionId) {
+      thinkingEl.classList.add('hidden');
+      return;
+    }
+    var session = sessions.find(function(s) { return s.session_id === selectedSessionId; });
+    if (session && session.thinking_text) {
+      thinkingEl.innerHTML = '<span class="thinking-dot"></span> ' + escapeHtml(session.thinking_text);
+      thinkingEl.classList.remove('hidden');
+    } else {
+      thinkingEl.classList.add('hidden');
     }
   }
 

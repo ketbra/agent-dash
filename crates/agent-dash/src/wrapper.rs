@@ -116,6 +116,56 @@ fn detect_suggestion(screen: &vt100::Screen) -> Option<String> {
     None
 }
 
+/// Detect thinking status text from the VT100 screen.
+///
+/// Claude Code displays a line like "· Pouncing… (thinking)" while processing.
+/// We scan rows bottom-up for a line starting with `·` (U+00B7 middle dot) or
+/// `•` (U+2022 bullet), and extract the full line text.
+fn detect_thinking_text(screen: &vt100::Screen) -> Option<String> {
+    if screen.alternate_screen() {
+        return None;
+    }
+
+    let rows = screen.size().0;
+    let width = screen.size().1;
+
+    for r in (0..rows).rev() {
+        let Some(cell) = screen.cell(r, 0) else {
+            continue;
+        };
+        let first_char = cell.contents();
+        if first_char != "·" && first_char != "•" {
+            continue;
+        }
+
+        // Found a row starting with a middle dot / bullet — extract the full line.
+        let mut text = String::new();
+        for c in 0..width {
+            let Some(cell) = screen.cell(r, c) else {
+                break;
+            };
+            let ch = cell.contents();
+            if ch.is_empty() {
+                continue;
+            }
+            text.push_str(ch);
+        }
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    None
+}
+
+/// Combined screen update sent from the reader thread to the sender thread.
+#[derive(Clone, Debug, PartialEq)]
+struct ScreenUpdate {
+    suggestion: Option<String>,
+    thinking_text: Option<String>,
+}
+
 /// Ensure the daemon is running. If not, fork it as a background process.
 /// Returns true if the daemon is available, false if couldn't start.
 fn ensure_daemon() -> bool {
@@ -297,8 +347,8 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
     // Shared terminal size for vt100 parser.
     let term_size = Arc::new(AtomicTermSize::new(cols, rows));
 
-    // Channel for sending detected suggestions to the daemon.
-    let (suggest_tx, suggest_rx) = std::sync::mpsc::sync_channel::<Option<String>>(4);
+    // Channel for sending detected screen updates (suggestion + thinking text) to the daemon.
+    let (screen_tx, screen_rx) = std::sync::mpsc::sync_channel::<ScreenUpdate>(4);
 
     // --- PTY reader thread: reads agent output, writes to stdout ---
     let running_reader = running.clone();
@@ -309,7 +359,7 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
             let mut stdout = std::io::stdout();
             let mut buf = [0u8; 4096];
             let mut parser = vt100::Parser::new(rows, cols, 0);
-            let mut last_suggestion: Option<String> = None;
+            let mut last_update = ScreenUpdate { suggestion: None, thinking_text: None };
             let mut last_check = Instant::now();
             let debounce = std::time::Duration::from_millis(100);
             let mut last_parser_size = (cols, rows);
@@ -333,14 +383,17 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
                         // Feed bytes to vt100 parser.
                         parser.process(&buf[..n]);
 
-                        // Debounced suggestion detection.
+                        // Debounced screen update detection.
                         let now = Instant::now();
                         if now.duration_since(last_check) >= debounce {
                             last_check = now;
-                            let suggestion = detect_suggestion(parser.screen());
-                            if suggestion != last_suggestion {
-                                last_suggestion = suggestion.clone();
-                                let _ = suggest_tx.try_send(suggestion);
+                            let update = ScreenUpdate {
+                                suggestion: detect_suggestion(parser.screen()),
+                                thinking_text: detect_thinking_text(parser.screen()),
+                            };
+                            if update != last_update {
+                                last_update = update.clone();
+                                let _ = screen_tx.try_send(update);
                             }
                         }
                     }
@@ -351,24 +404,39 @@ pub fn run(profile: &AgentProfile, args: &[String]) -> i32 {
         })
     };
 
-    // --- Suggestion sender thread: drains suggestion channel, sends to daemon ---
+    // --- Screen update sender thread: drains screen update channel, sends to daemon ---
     {
         let running_suggest = running.clone();
         let session_id_suggest = session_id.clone();
         std::thread::spawn(move || {
-            // Open a dedicated connection for suggestion updates.
+            // Open a dedicated connection for screen updates.
             let Some(conn) = try_connect_daemon() else {
                 return;
             };
+            let mut last_suggestion: Option<String> = None;
+            let mut last_thinking: Option<String> = None;
             while running_suggest.load(Ordering::Relaxed) {
-                match suggest_rx.recv_timeout(std::time::Duration::from_millis(500)) {
-                    Ok(suggestion) => {
-                        let req = ClientRequest::UpdateSuggestion {
-                            session_id: session_id_suggest.clone(),
-                            suggestion,
-                        };
-                        if send_to_daemon(&conn, &req).is_err() {
-                            break;
+                match screen_rx.recv_timeout(std::time::Duration::from_millis(500)) {
+                    Ok(update) => {
+                        if update.suggestion != last_suggestion {
+                            last_suggestion = update.suggestion.clone();
+                            let req = ClientRequest::UpdateSuggestion {
+                                session_id: session_id_suggest.clone(),
+                                suggestion: update.suggestion,
+                            };
+                            if send_to_daemon(&conn, &req).is_err() {
+                                break;
+                            }
+                        }
+                        if update.thinking_text != last_thinking {
+                            last_thinking = update.thinking_text.clone();
+                            let req = ClientRequest::UpdateThinkingText {
+                                session_id: session_id_suggest.clone(),
+                                thinking_text: update.thinking_text,
+                            };
+                            if send_to_daemon(&conn, &req).is_err() {
+                                break;
+                            }
                         }
                     }
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
@@ -627,6 +695,47 @@ mod tests {
         let result = suggestion_from(&seq);
         // Trailing non-dim quote is not included — that's fine.
         assert_eq!(result, Some("Try \"refactor monitor.rs".to_string()));
+    }
+
+    /// Helper: create a parser, write VT100 sequences, return detected thinking text.
+    fn thinking_from(sequences: &[u8]) -> Option<String> {
+        let mut parser = vt100::Parser::new(24, 80, 0);
+        parser.process(sequences);
+        detect_thinking_text(parser.screen())
+    }
+
+    #[test]
+    fn detect_thinking_middle_dot() {
+        let result = thinking_from("· Pouncing\u{2026} (thinking)".as_bytes());
+        assert_eq!(result, Some("· Pouncing\u{2026} (thinking)".to_string()));
+    }
+
+    #[test]
+    fn detect_thinking_bullet() {
+        let result = thinking_from("• Working\u{2026} (thinking)".as_bytes());
+        assert_eq!(result, Some("• Working\u{2026} (thinking)".to_string()));
+    }
+
+    #[test]
+    fn no_thinking_on_normal_text() {
+        let result = thinking_from(b"Hello world");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn no_thinking_on_alternate_screen() {
+        let mut parser = vt100::Parser::new(24, 80, 0);
+        parser.process(b"\x1b[?1049h");
+        parser.process("· Thinking\u{2026}".as_bytes());
+        let result = detect_thinking_text(parser.screen());
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn detect_thinking_not_prompt_line() {
+        // Make sure a prompt line with ">" doesn't match as thinking
+        let result = thinking_from(b"> some prompt text");
+        assert_eq!(result, None);
     }
 
     #[test]
