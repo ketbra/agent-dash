@@ -212,11 +212,20 @@ fn extract_tool_detail(input: &serde_json::Value, tool_name: &str) -> String {
                 .and_then(|ti| ti.get("command"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            // Truncate to 500 characters (char-boundary safe).
-            if cmd.chars().count() > 500 {
-                cmd.chars().take(500).collect()
-            } else {
+            let desc = tool_input
+                .and_then(|ti| ti.get("description"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let combined = if desc.is_empty() {
                 cmd.to_string()
+            } else {
+                format!("{cmd}\n{desc}")
+            };
+            // Truncate to 500 characters (char-boundary safe).
+            if combined.chars().count() > 500 {
+                combined.chars().take(500).collect()
+            } else {
+                combined
             }
         }
         "Read" | "Edit" | "Write" => tool_input
@@ -385,6 +394,16 @@ mod tests {
         });
         let detail = extract_tool_detail(&input, "Bash");
         assert_eq!(detail, "ls -la");
+    }
+
+    #[test]
+    fn extract_tool_detail_bash_with_description() {
+        let input = serde_json::json!({
+            "tool_name": "Bash",
+            "tool_input": {"command": "git push", "description": "Push to remote"}
+        });
+        let detail = extract_tool_detail(&input, "Bash");
+        assert_eq!(detail, "git push\nPush to remote");
     }
 
     #[test]
