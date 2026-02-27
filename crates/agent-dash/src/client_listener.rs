@@ -114,6 +114,12 @@ pub enum ClientMessage {
         session_id: String,
         data: String,
     },
+    /// Client requesting terminal resize for a session.
+    TerminalResize {
+        session_id: String,
+        cols: u16,
+        rows: u16,
+    },
 }
 
 /// Run the client listener. Accepts persistent bidirectional connections on
@@ -440,6 +446,11 @@ async fn handle_client_connection(
             ClientRequest::TerminalInput { session_id, data } => {
                 let _ = tx
                     .send(ClientMessage::TerminalInput { session_id, data })
+                    .await;
+            }
+            ClientRequest::TerminalResize { session_id, cols, rows } => {
+                let _ = tx
+                    .send(ClientMessage::TerminalResize { session_id, cols, rows })
                     .await;
             }
         }
