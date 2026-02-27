@@ -199,6 +199,7 @@
         terminalInstance.clear();
       }
       send({ method: 'watch_terminal', session_id: id });
+      sendTerminalSize();
     }
   }
 
@@ -490,6 +491,7 @@
       terminalInstance.loadAddon(fitAddon);
       terminalInstance.open(terminalView);
       fitAddon.fit();
+      sendTerminalSize();
 
       // Forward terminal input to the daemon as raw bytes.
       terminalInstance.onData(function (data) {
@@ -515,6 +517,7 @@
         if (terminalInstance && fitAddon) {
           fitAddon.fit();
         }
+        sendTerminalSize();
         if (selectedSessionId) {
           send({ method: 'watch_terminal', session_id: selectedSessionId });
         }
@@ -535,15 +538,28 @@
 
   viewToggleBtn.onclick = toggleView;
 
+  function sendTerminalSize() {
+    if (!selectedSessionId || !terminalInstance) return;
+    send({
+      method: 'terminal_resize',
+      session_id: selectedSessionId,
+      cols: terminalInstance.cols,
+      rows: terminalInstance.rows
+    });
+  }
+
   // --- New session creation ---
   newSessionBtn.onclick = function () {
     send({ method: 'create_session' });
   };
 
   // Refit terminal on window resize.
+  var resizeTimer = null;
   window.addEventListener('resize', function () {
     if (viewMode === 'terminal' && fitAddon) {
       fitAddon.fit();
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(sendTerminalSize, 150);
     }
   });
 
