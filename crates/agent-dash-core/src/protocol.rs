@@ -170,6 +170,12 @@ pub enum ClientRequest {
         session_id: String,
         data: String, // base64-encoded raw bytes
     },
+    #[serde(rename = "terminal_resize")]
+    TerminalResize {
+        session_id: String,
+        cols: u16,
+        rows: u16,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +232,11 @@ pub enum ServerEvent {
     #[serde(rename = "terminal_write")]
     TerminalWrite {
         data: String, // base64-encoded raw bytes to write to PTY
+    },
+    #[serde(rename = "terminal_resize")]
+    TerminalResize {
+        cols: u16,
+        rows: u16,
     },
     #[serde(rename = "session_created")]
     SessionCreated {
@@ -896,6 +907,29 @@ mod tests {
             }
             _ => panic!("expected TerminalInput"),
         }
+    }
+
+    #[test]
+    fn deserialize_terminal_resize() {
+        let json = r#"{"method":"terminal_resize","session_id":"s1","cols":120,"rows":40}"#;
+        let req: ClientRequest = serde_json::from_str(json).unwrap();
+        match req {
+            ClientRequest::TerminalResize { session_id, cols, rows } => {
+                assert_eq!(session_id, "s1");
+                assert_eq!(cols, 120);
+                assert_eq!(rows, 40);
+            }
+            _ => panic!("expected TerminalResize"),
+        }
+    }
+
+    #[test]
+    fn serialize_terminal_resize_event() {
+        let event = ServerEvent::TerminalResize { cols: 80, rows: 24 };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"event\":\"terminal_resize\""));
+        assert!(json.contains("\"cols\":80"));
+        assert!(json.contains("\"rows\":24"));
     }
 
     #[test]
