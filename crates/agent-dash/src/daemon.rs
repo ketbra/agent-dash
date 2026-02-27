@@ -666,6 +666,23 @@ pub async fn run(web_port: u16) {
                             let _ = wrapper_tx.try_send(ServerEvent::TerminalWrite { data });
                         }
                     }
+                    ClientMessage::TerminalResize { session_id, cols, rows } => {
+                        // Forward resize to the wrapper via its event channel.
+                        let wrapper_tx = wrapper_channels.get(&session_id).or_else(|| {
+                            let matches: Vec<_> = wrapper_channels
+                                .iter()
+                                .filter(|(k, _)| k.starts_with(&session_id))
+                                .collect();
+                            if matches.len() == 1 {
+                                Some(matches[0].1)
+                            } else {
+                                None
+                            }
+                        });
+                        if let Some(wrapper_tx) = wrapper_tx {
+                            let _ = wrapper_tx.try_send(ServerEvent::TerminalResize { cols, rows });
+                        }
+                    }
                 }
             }
 
