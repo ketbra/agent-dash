@@ -197,6 +197,7 @@
     if (viewMode === 'terminal') {
       if (terminalInstance) {
         terminalInstance.clear();
+        if (fitAddon) fitAddon.fit();
       }
       send({ method: 'watch_terminal', session_id: id });
       sendTerminalSize();
@@ -325,7 +326,7 @@
 
   // --- Permission UI ---
   function updatePermissions() {
-    if (!selectedSessionId || !pendingPermissions[selectedSessionId]) {
+    if (!selectedSessionId || !pendingPermissions[selectedSessionId] || viewMode === 'terminal') {
       permBanner.classList.add('hidden');
       return;
     }
@@ -495,8 +496,6 @@
       terminalInstance.loadAddon(fitAddon);
       terminalInstance.open(terminalView);
       terminalInstance.loadAddon(new webglMod.WebglAddon());
-      fitAddon.fit();
-      sendTerminalSize();
 
       // Forward terminal input to the daemon as raw bytes.
       terminalInstance.onData(function (data) {
@@ -537,6 +536,7 @@
       if (selectedSessionId) promptForm.classList.remove('hidden');
       terminalView.classList.add('hidden');
       viewToggleBtn.classList.remove('active');
+      updatePermissions();
       if (selectedSessionId) {
         send({ method: 'unwatch_terminal', session_id: selectedSessionId });
       }
