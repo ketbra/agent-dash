@@ -417,7 +417,7 @@
 
   // --- Thinking indicator ---
   function updateThinking() {
-    if (!selectedSessionId) {
+    if (!selectedSessionId || viewMode === 'terminal') {
       thinkingEl.classList.add('hidden');
       return;
     }
