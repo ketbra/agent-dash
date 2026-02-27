@@ -264,6 +264,11 @@ async fn handle_ws(socket: WebSocket, client_tx: mpsc::Sender<ClientMessage>) {
                     .send(ClientMessage::TerminalInput { session_id, data })
                     .await;
             }
+            ClientRequest::TerminalResize { session_id, cols, rows } => {
+                let _ = client_tx_clone
+                    .send(ClientMessage::TerminalResize { session_id, cols, rows })
+                    .await;
+            }
             // Ignore wrapper-only requests from the web UI.
             _ => {}
         }
