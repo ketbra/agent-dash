@@ -335,6 +335,10 @@ pub fn run(profile: &AgentProfile, args: &[String], opts: &RunOptions) -> i32 {
         .take_writer()
         .expect("failed to take pty writer");
 
+    // Wrap master in Arc<Mutex<>> so both the resize thread and daemon
+    // listener can call resize().
+    let master = Arc::new(std::sync::Mutex::new(pair.master));
+
     // Try to connect to the daemon and register.
     let daemon_conn = try_connect_daemon();
 
@@ -572,6 +576,8 @@ pub fn run(profile: &AgentProfile, args: &[String], opts: &RunOptions) -> i32 {
         let running_daemon = running.clone();
         let session_id_daemon = session_id.clone();
         let agent_name = profile.name.to_string();
+        let master_daemon = master.clone();
+        let term_size_daemon = term_size.clone();
         std::thread::spawn(move || {
             let engine = base64::engine::general_purpose::STANDARD;
             let mut conn = conn;
@@ -606,6 +612,17 @@ pub fn run(profile: &AgentProfile, args: &[String], opts: &RunOptions) -> i32 {
                                             return;
                                         }
                                     }
+                                }
+                                ServerEvent::TerminalResize { cols, rows } => {
+                                    if let Ok(m) = master_daemon.lock() {
+                                        let _ = m.resize(PtySize {
+                                            rows,
+                                            cols,
+                                            pixel_width: 0,
+                                            pixel_height: 0,
+                                        });
+                                    }
+                                    term_size_daemon.store(cols, rows);
                                 }
                                 _ => {}
                             }
@@ -658,9 +675,9 @@ pub fn run(profile: &AgentProfile, args: &[String], opts: &RunOptions) -> i32 {
 
     // --- Resize thread: periodically checks terminal size (skip in headless mode) ---
     if !headless {
-        let master = pair.master;
+        let master = master.clone();
         let running_resize = running.clone();
-        let term_size_resize = term_size;
+        let term_size_resize = term_size.clone();
         std::thread::spawn(move || {
             let mut last_size = (cols, rows);
             loop {
@@ -670,12 +687,14 @@ pub fn run(profile: &AgentProfile, args: &[String], opts: &RunOptions) -> i32 {
                 }
                 if let Ok((new_cols, new_rows)) = terminal::size() {
                     if (new_cols, new_rows) != last_size {
-                        let _ = master.resize(PtySize {
-                            rows: new_rows,
-                            cols: new_cols,
-                            pixel_width: 0,
-                            pixel_height: 0,
-                        });
+                        if let Ok(m) = master.lock() {
+                            let _ = m.resize(PtySize {
+                                rows: new_rows,
+                                cols: new_cols,
+                                pixel_width: 0,
+                                pixel_height: 0,
+                            });
+                        }
                         term_size_resize.store(new_cols, new_rows);
                         last_size = (new_cols, new_rows);
                     }
@@ -684,8 +703,9 @@ pub fn run(profile: &AgentProfile, args: &[String], opts: &RunOptions) -> i32 {
         });
     } else {
         // In headless mode, we still need to keep pair.master alive to
-        // prevent the PTY from closing.
-        let _master = pair.master;
+        // prevent the PTY from closing. The Arc<Mutex<>> is kept alive
+        // by this clone; resize happens via the daemon listener thread.
+        let _master = master.clone();
         let running_headless = running.clone();
         std::thread::spawn(move || {
             while running_headless.load(Ordering::Relaxed) {
