@@ -455,14 +455,16 @@
     if (xtermLoaded || xtermLoading) return;
     xtermLoading = true;
     try {
-      var xtermMod = await import('https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/+esm');
-      var fitMod = await import('https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm');
+      var xtermMod = await import('https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/+esm');
+      var fitMod = await import('https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.11.0/+esm');
+      var webglMod = await import('https://cdn.jsdelivr.net/npm/@xterm/addon-webgl@0.19.0/+esm');
       fitAddon = new fitMod.FitAddon();
       terminalInstance = new xtermMod.Terminal({
         disableStdin: false,
         convertEol: false,
         scrollback: 5000,
         fontSize: 13,
+        customGlyphs: true,
         cursorBlink: true,
         fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
         theme: {
@@ -490,6 +492,7 @@
       });
       terminalInstance.loadAddon(fitAddon);
       terminalInstance.open(terminalView);
+      terminalInstance.loadAddon(new webglMod.WebglAddon());
       fitAddon.fit();
       sendTerminalSize();
 
