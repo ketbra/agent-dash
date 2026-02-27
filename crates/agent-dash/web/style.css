@@ -45,7 +45,8 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   color: var(--text-dim);
 }
 
-#new-session-btn {
+#new-session-btn,
+#view-toggle-btn {
   width: 28px;
   height: 28px;
   border-radius: 6px;
@@ -61,7 +62,13 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   padding: 0;
 }
 
-#new-session-btn:hover {
+#new-session-btn:hover,
+#view-toggle-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+#view-toggle-btn.active {
   color: var(--accent);
   border-color: var(--accent);
 }
@@ -306,55 +313,11 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 
 #suggestion:hover { color: var(--text); }
 
-#terminal-container {
-  display: flex;
-  flex-direction: column;
-  height: 40%;
-  min-height: 150px;
-  border-top: 1px solid var(--border);
-  background: var(--bg);
-}
-
-#terminal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 4px 12px;
-  font-size: 12px;
-  color: var(--text-dim);
-  background: var(--bg-sidebar);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-
-#terminal-close {
-  background: none;
-  border: none;
-  color: var(--text-dim);
-  font-size: 16px;
-  cursor: pointer;
-  padding: 0 4px;
-}
-#terminal-close:hover { color: var(--text); }
-
 #terminal-view {
   flex: 1;
   overflow: hidden;
   padding: 4px;
 }
-
-#terminal-toggle {
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text-dim);
-  cursor: pointer;
-  padding: 10px 12px;
-  font-size: 14px;
-  margin-left: 8px;
-}
-#terminal-toggle:hover { color: var(--text); border-color: var(--accent); }
-#terminal-toggle.active { color: var(--accent); border-color: var(--accent); }
 
 .hidden { display: none !important; }
 

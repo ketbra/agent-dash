@@ -12,26 +12,22 @@
     <aside id="sidebar">
       <div id="sidebar-header">
         <h2>Sessions</h2>
-        <button id="new-session-btn" type="button" title="Create new session">+</button>
+        <div style="display:flex;gap:4px;">
+          <button id="view-toggle-btn" type="button" title="Toggle terminal view">&#9638;</button>
+          <button id="new-session-btn" type="button" title="Create new session">+</button>
+        </div>
       </div>
       <ul id="session-list"></ul>
     </aside>
     <main id="main">
       <div id="permission-banner" class="hidden"></div>
       <div id="messages"></div>
-      <div id="terminal-container" class="hidden">
-        <div id="terminal-header">
-          <span>Terminal Output</span>
-          <button id="terminal-close" type="button">&times;</button>
-        </div>
-        <div id="terminal-view"></div>
-      </div>
+      <div id="terminal-view" class="hidden"></div>
       <div id="thinking-indicator" class="hidden"></div>
       <form id="prompt-form" class="hidden">
         <div id="image-previews" class="hidden"></div>
         <div id="prompt-row">
           <input type="text" id="prompt-input" placeholder="Send a prompt... (paste images with Ctrl+V)" autocomplete="off">
-          <button type="button" id="terminal-toggle" title="Toggle terminal output">&#9638;</button>
           <button type="submit">Send</button>
         </div>
         <div id="suggestion" class="hidden"></div>

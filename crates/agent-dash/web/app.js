@@ -8,7 +8,7 @@
   let selectedSessionId = null;
   let pendingPermissions = {}; // session_id -> permission info
   let pendingImages = []; // [{mime_type, data, dataUrl}]
-  let terminalVisible = false;
+  let viewMode = 'messages';  // 'messages' | 'terminal'
   let terminalInstance = null;
   let fitAddon = null;
   let xtermLoaded = false;
@@ -23,10 +23,8 @@
   const imagePreviewsEl = document.getElementById('image-previews');
   const suggestionEl = document.getElementById('suggestion');
   const thinkingEl = document.getElementById('thinking-indicator');
-  const terminalContainer = document.getElementById('terminal-container');
   const terminalView = document.getElementById('terminal-view');
-  const terminalToggle = document.getElementById('terminal-toggle');
-  const terminalClose = document.getElementById('terminal-close');
+  const viewToggleBtn = document.getElementById('view-toggle-btn');
   const newSessionBtn = document.getElementById('new-session-btn');
 
   // --- WebSocket ---
@@ -40,7 +38,7 @@
       if (selectedSessionId) {
         send({ method: 'get_messages', session_id: selectedSessionId, format: 'html', limit: 100 });
         send({ method: 'watch_session', session_id: selectedSessionId, format: 'html' });
-        if (terminalVisible) {
+        if (viewMode === 'terminal') {
           send({ method: 'watch_terminal', session_id: selectedSessionId });
         }
       }
@@ -121,7 +119,7 @@
             var found = sessions.find(function(s) { return s.session_id === newId; });
             if (found) {
               selectSession(newId);
-              showTerminal();
+              setViewMode('terminal');
             } else if (waitAttempts < 20) {
               waitAttempts++;
               setTimeout(waitForSession, 250);
@@ -178,7 +176,7 @@
     // Unwatch previous
     if (selectedSessionId) {
       send({ method: 'unwatch_session', session_id: selectedSessionId });
-      if (terminalVisible) {
+      if (viewMode === 'terminal') {
         send({ method: 'unwatch_terminal', session_id: selectedSessionId });
       }
     }
@@ -195,8 +193,8 @@
     send({ method: 'get_messages', session_id: id, format: 'html', limit: 100 });
     send({ method: 'watch_session', session_id: id, format: 'html' });
 
-    // Re-watch terminal for new session if visible
-    if (terminalVisible) {
+    // Re-watch terminal for new session if in terminal mode
+    if (viewMode === 'terminal') {
       if (terminalInstance) {
         terminalInstance.clear();
       }
@@ -507,38 +505,35 @@
     xtermLoading = false;
   }
 
-  function showTerminal() {
-    if (!selectedSessionId) return;
-    terminalVisible = true;
-    terminalContainer.classList.remove('hidden');
-    terminalToggle.classList.add('active');
-    loadXterm().then(function () {
-      if (terminalInstance && fitAddon) {
-        fitAddon.fit();
-      }
-      send({ method: 'watch_terminal', session_id: selectedSessionId });
-    });
-  }
-
-  function hideTerminal() {
-    terminalVisible = false;
-    terminalContainer.classList.add('hidden');
-    terminalToggle.classList.remove('active');
-    if (selectedSessionId) {
-      send({ method: 'unwatch_terminal', session_id: selectedSessionId });
-    }
-  }
-
-  function toggleTerminal() {
-    if (terminalVisible) {
-      hideTerminal();
+  function setViewMode(mode) {
+    viewMode = mode;
+    if (mode === 'terminal') {
+      messagesEl.classList.add('hidden');
+      terminalView.classList.remove('hidden');
+      viewToggleBtn.classList.add('active');
+      loadXterm().then(function () {
+        if (terminalInstance && fitAddon) {
+          fitAddon.fit();
+        }
+        if (selectedSessionId) {
+          send({ method: 'watch_terminal', session_id: selectedSessionId });
+        }
+      });
     } else {
-      showTerminal();
+      messagesEl.classList.remove('hidden');
+      terminalView.classList.add('hidden');
+      viewToggleBtn.classList.remove('active');
+      if (selectedSessionId) {
+        send({ method: 'unwatch_terminal', session_id: selectedSessionId });
+      }
     }
   }
 
-  terminalToggle.onclick = toggleTerminal;
-  terminalClose.onclick = hideTerminal;
+  function toggleView() {
+    setViewMode(viewMode === 'messages' ? 'terminal' : 'messages');
+  }
+
+  viewToggleBtn.onclick = toggleView;
 
   // --- New session creation ---
   newSessionBtn.onclick = function () {
@@ -547,7 +542,7 @@
 
   // Refit terminal on window resize.
   window.addEventListener('resize', function () {
-    if (terminalVisible && fitAddon) {
+    if (viewMode === 'terminal' && fitAddon) {
       fitAddon.fit();
     }
   });
