@@ -184,7 +184,7 @@
     selectedSessionId = id;
     renderSessions();
     messagesEl.innerHTML = '<div id="empty-state">Loading...</div>';
-    promptForm.classList.remove('hidden');
+    if (viewMode !== 'terminal') promptForm.classList.remove('hidden');
     updatePermissions();
     updateSuggestion();
     updateThinking();
