@@ -426,7 +426,9 @@
       thinkingEl.innerHTML = '<span class="thinking-dot"></span> ' + escapeHtml(session.thinking_text);
       thinkingEl.classList.remove('hidden');
     } else {
+      var wasVisible = !thinkingEl.classList.contains('hidden');
       thinkingEl.classList.add('hidden');
+      if (wasVisible) messagesEl.scrollTop = messagesEl.scrollHeight;
     }
   }
 
@@ -518,10 +520,14 @@
       terminalView.classList.remove('hidden');
       viewToggleBtn.classList.add('active');
       loadXterm().then(function () {
-        if (terminalInstance && fitAddon) {
-          fitAddon.fit();
-        }
-        sendTerminalSize();
+        // Defer fit until the browser has laid out the now-visible container,
+        // otherwise fitAddon reads stale/zero dimensions.
+        requestAnimationFrame(function () {
+          if (terminalInstance && fitAddon) {
+            fitAddon.fit();
+          }
+          sendTerminalSize();
+        });
         if (selectedSessionId) {
           send({ method: 'watch_terminal', session_id: selectedSessionId });
         }
