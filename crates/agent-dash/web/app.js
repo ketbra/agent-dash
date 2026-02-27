@@ -514,6 +514,7 @@
     viewMode = mode;
     if (mode === 'terminal') {
       messagesEl.classList.add('hidden');
+      promptForm.classList.add('hidden');
       terminalView.classList.remove('hidden');
       viewToggleBtn.classList.add('active');
       loadXterm().then(function () {
@@ -527,6 +528,7 @@
       });
     } else {
       messagesEl.classList.remove('hidden');
+      if (selectedSessionId) promptForm.classList.remove('hidden');
       terminalView.classList.add('hidden');
       viewToggleBtn.classList.remove('active');
       if (selectedSessionId) {
