@@ -404,6 +404,7 @@
         session_id: perm.session_id,
         decision: 'allow'
       });
+      refocusActive();
     };
 
     window._permDeny = function () {
@@ -413,6 +414,7 @@
         session_id: perm.session_id,
         decision: 'deny'
       });
+      refocusActive();
     };
 
     window._permSuggest = function (i) {
@@ -423,6 +425,7 @@
         decision: 'allow',
         suggestion: perm.suggestions[i]
       });
+      refocusActive();
     };
   }
 
@@ -541,6 +544,17 @@
         }
       });
 
+      // Prevent the browser from consuming keys we need (Escape, Ctrl-n, etc.).
+      // Registering this handler causes xterm.js to call preventDefault() on the
+      // DOM keydown event, so the browser never acts on these keys.
+      terminalInstance.attachCustomKeyEventHandler(function (ev) {
+        if (ev.type === 'keydown') {
+          if (ev.key === 'Escape') return true;
+          if (ev.ctrlKey && !ev.altKey && !ev.metaKey) return true;
+        }
+        return true;
+      });
+
       xtermLoaded = true;
     } catch (e) {
       console.error('Failed to load xterm.js:', e);
@@ -588,6 +602,7 @@
   collapseBtn.onclick = function () {
     sidebar.classList.toggle('collapsed');
     collapseBtn.innerHTML = sidebar.classList.contains('collapsed') ? '&#9654;' : '&#9664;';
+    refocusActive();
   };
 
   // After sidebar transition completes, refit terminal to new container size.
@@ -611,6 +626,7 @@
   // --- New session creation ---
   newSessionBtn.onclick = function () {
     send({ method: 'create_session' });
+    refocusActive();
   };
 
   // Refit terminal on window resize.
@@ -619,6 +635,14 @@
       scheduleTerminalFit(150);
     }
   });
+
+  function refocusActive() {
+    if (viewMode === 'terminal' && terminalInstance) {
+      terminalInstance.focus();
+    } else {
+      promptInput.focus();
+    }
+  }
 
   // --- Utilities ---
   function escapeHtml(str) {
