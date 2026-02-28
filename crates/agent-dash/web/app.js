@@ -201,7 +201,7 @@
     // Re-watch terminal for new session if in terminal mode
     if (viewMode === 'terminal') {
       if (terminalInstance) {
-        terminalInstance.clear();
+        terminalInstance.reset();
         terminalInstance.focus();
         scheduleTerminalFit();
       }
