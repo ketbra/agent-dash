@@ -30,6 +30,12 @@
   const collapseBtn = document.getElementById('collapse-btn');
   const sidebar = document.getElementById('sidebar');
   const newSessionBtn = document.getElementById('new-session-btn');
+  const newSessionModal = document.getElementById('new-session-modal');
+  const modalAgent = document.getElementById('modal-agent');
+  const modalCwd = document.getElementById('modal-cwd');
+  const modalCwdSuggestions = document.getElementById('modal-cwd-suggestions');
+  const modalCancel = document.getElementById('modal-cancel');
+  const modalCreate = document.getElementById('modal-create');
 
   // --- WebSocket ---
   function connect() {
@@ -134,6 +140,9 @@
         break;
       case 'prompt_sent':
         // Could show a confirmation toast
+        break;
+      case 'directory_listing':
+        renderDirSuggestions(data.path, data.entries);
         break;
       case 'error':
         console.error('Server error:', data.message);
@@ -623,11 +632,166 @@
     });
   }
 
-  // --- New session creation ---
+  // --- New session modal ---
+  var dirDebounceTimer = null;
+  var highlightedIdx = -1;
+
   newSessionBtn.onclick = function () {
-    send({ method: 'create_session' });
-    refocusActive();
+    newSessionModal.classList.remove('hidden');
+    modalCwd.value = '';
+    modalCwdSuggestions.classList.add('hidden');
+    highlightedIdx = -1;
+    modalCwd.focus();
+    // Kick off initial listing for home directory
+    send({ method: 'list_directory' });
   };
+
+  modalCancel.onclick = closeNewSessionModal;
+
+  newSessionModal.onclick = function (e) {
+    if (e.target === newSessionModal) closeNewSessionModal();
+  };
+
+  function closeNewSessionModal() {
+    newSessionModal.classList.add('hidden');
+    modalCwdSuggestions.classList.add('hidden');
+    refocusActive();
+  }
+
+  modalCreate.onclick = function () {
+    var agent = modalAgent.value;
+    var cwd = modalCwd.value.trim() || undefined;
+    var msg = { method: 'create_session', agent: agent };
+    if (cwd) msg.cwd = cwd;
+    if (terminalInstance) {
+      msg.cols = terminalInstance.cols;
+      msg.rows = terminalInstance.rows;
+    }
+    send(msg);
+    closeNewSessionModal();
+  };
+
+  // Directory autocomplete
+  modalCwd.addEventListener('input', function () {
+    clearTimeout(dirDebounceTimer);
+    dirDebounceTimer = setTimeout(function () {
+      var val = modalCwd.value;
+      // Determine parent directory to list
+      var parentDir;
+      if (val === '' || val === '/') {
+        parentDir = val || undefined;
+      } else if (val.endsWith('/')) {
+        parentDir = val;
+      } else {
+        var lastSlash = val.lastIndexOf('/');
+        parentDir = lastSlash >= 0 ? val.substring(0, lastSlash + 1) : undefined;
+      }
+      var msg = { method: 'list_directory' };
+      if (parentDir) msg.path = parentDir;
+      send(msg);
+    }, 200);
+  });
+
+  modalCwd.addEventListener('keydown', function (e) {
+    var items = modalCwdSuggestions.querySelectorAll('li');
+    if (items.length === 0 || modalCwdSuggestions.classList.contains('hidden')) {
+      if (e.key === 'Escape') {
+        closeNewSessionModal();
+        e.preventDefault();
+      } else if (e.key === 'Enter') {
+        modalCreate.click();
+        e.preventDefault();
+      }
+      return;
+    }
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      highlightedIdx = Math.min(highlightedIdx + 1, items.length - 1);
+      updateHighlight(items);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      highlightedIdx = Math.max(highlightedIdx - 1, -1);
+      updateHighlight(items);
+    } else if (e.key === 'Tab' || e.key === 'Enter') {
+      e.preventDefault();
+      if (highlightedIdx >= 0 && highlightedIdx < items.length) {
+        selectSuggestion(items[highlightedIdx].dataset.path);
+      } else if (items.length === 1) {
+        selectSuggestion(items[0].dataset.path);
+      } else if (e.key === 'Enter') {
+        modalCreate.click();
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      modalCwdSuggestions.classList.add('hidden');
+      highlightedIdx = -1;
+    }
+  });
+
+  function updateHighlight(items) {
+    for (var i = 0; i < items.length; i++) {
+      items[i].classList.toggle('highlighted', i === highlightedIdx);
+    }
+    if (highlightedIdx >= 0 && items[highlightedIdx]) {
+      items[highlightedIdx].scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  function selectSuggestion(fullPath) {
+    modalCwd.value = fullPath;
+    highlightedIdx = -1;
+    modalCwdSuggestions.classList.add('hidden');
+    modalCwd.focus();
+    // Fetch next level
+    send({ method: 'list_directory', path: fullPath });
+  }
+
+  function renderDirSuggestions(parentPath, entries) {
+    modalCwdSuggestions.innerHTML = '';
+    highlightedIdx = -1;
+
+    if (!entries || entries.length === 0) {
+      modalCwdSuggestions.classList.add('hidden');
+      return;
+    }
+
+    // Filter by typed prefix
+    var val = modalCwd.value;
+    var prefix = '';
+    if (val && !val.endsWith('/')) {
+      var lastSlash = val.lastIndexOf('/');
+      prefix = lastSlash >= 0 ? val.substring(lastSlash + 1).toLowerCase() : val.toLowerCase();
+    }
+
+    var normalizedParent = parentPath.endsWith('/') ? parentPath : parentPath + '/';
+    var filtered = entries.filter(function (name) {
+      return !prefix || name.toLowerCase().indexOf(prefix) === 0;
+    });
+
+    if (filtered.length === 0) {
+      modalCwdSuggestions.classList.add('hidden');
+      return;
+    }
+
+    filtered.forEach(function (name) {
+      var li = document.createElement('li');
+      li.textContent = name + '/';
+      li.dataset.path = normalizedParent + name + '/';
+      li.onclick = function () {
+        selectSuggestion(li.dataset.path);
+      };
+      modalCwdSuggestions.appendChild(li);
+    });
+    modalCwdSuggestions.classList.remove('hidden');
+  }
+
+  // Close modal on Escape when focus is elsewhere
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !newSessionModal.classList.contains('hidden')) {
+      closeNewSessionModal();
+    }
+  });
 
   // Refit terminal on window resize.
   window.addEventListener('resize', function () {

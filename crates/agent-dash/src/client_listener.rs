@@ -453,6 +453,8 @@ async fn handle_client_connection(
                     .send(ClientMessage::TerminalResize { session_id, cols, rows })
                     .await;
             }
+            // ListDirectory is handled by the web server, not the daemon.
+            ClientRequest::ListDirectory { .. } => {}
         }
     }
 }

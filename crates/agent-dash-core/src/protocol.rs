@@ -176,6 +176,11 @@ pub enum ClientRequest {
         cols: u16,
         rows: u16,
     },
+    #[serde(rename = "list_directory")]
+    ListDirectory {
+        #[serde(default)]
+        path: Option<String>,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -246,6 +251,11 @@ pub enum ServerEvent {
     /// force a redraw so the child TUI re-renders at the correct dimensions.
     #[serde(rename = "force_redraw")]
     ForceRedraw,
+    #[serde(rename = "directory_listing")]
+    DirectoryListing {
+        path: String,
+        entries: Vec<String>,
+    },
     #[serde(rename = "error")]
     Error {
         message: String,

@@ -35,6 +35,25 @@
       </form>
     </main>
   </div>
+  <div id="new-session-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <h3>New Session</h3>
+      <label for="modal-agent">Agent</label>
+      <select id="modal-agent">
+        <option value="claude" selected>Claude Code</option>
+        <option value="codex">Codex CLI</option>
+      </select>
+      <label for="modal-cwd">Working Directory</label>
+      <div class="autocomplete-wrap">
+        <input type="text" id="modal-cwd" placeholder="~/projects/my-app" autocomplete="off">
+        <ul id="modal-cwd-suggestions" class="hidden"></ul>
+      </div>
+      <div class="modal-buttons">
+        <button type="button" id="modal-cancel">Cancel</button>
+        <button type="button" id="modal-create">Create</button>
+      </div>
+    </div>
+  </div>
   <script src="/app.js"></script>
 </body>
 </html>

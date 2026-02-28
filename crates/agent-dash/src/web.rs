@@ -1,5 +1,5 @@
 use crate::client_listener::ClientMessage;
-use agent_dash_core::protocol::ClientRequest;
+use agent_dash_core::protocol::{ClientRequest, ServerEvent};
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{State, WebSocketUpgrade};
 use axum::http::{header, StatusCode};
@@ -268,6 +268,34 @@ async fn handle_ws(socket: WebSocket, client_tx: mpsc::Sender<ClientMessage>) {
                 let _ = client_tx_clone
                     .send(ClientMessage::TerminalResize { session_id, cols, rows })
                     .await;
+            }
+            ClientRequest::ListDirectory { path } => {
+                let dir = match path {
+                    Some(ref p) if !p.is_empty() => std::path::PathBuf::from(p),
+                    _ => dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/")),
+                };
+                let response = match std::fs::read_dir(&dir) {
+                    Ok(rd) => {
+                        let mut entries: Vec<String> = rd
+                            .filter_map(|e| e.ok())
+                            .filter(|e| e.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
+                            .filter_map(|e| e.file_name().into_string().ok())
+                            .filter(|name| !name.starts_with('.'))
+                            .collect();
+                        entries.sort();
+                        entries.truncate(200);
+                        serde_json::to_string(&ServerEvent::DirectoryListing {
+                            path: dir.to_string_lossy().into_owned(),
+                            entries,
+                        })
+                    }
+                    Err(e) => serde_json::to_string(&ServerEvent::Error {
+                        message: format!("list_directory: {e}"),
+                    }),
+                };
+                if let Ok(json) = response {
+                    let _ = event_tx_clone.send(json).await;
+                }
             }
             // Ignore wrapper-only requests from the web UI.
             _ => {}
