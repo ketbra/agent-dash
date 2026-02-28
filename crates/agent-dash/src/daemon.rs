@@ -14,7 +14,7 @@ use tokio::sync::{mpsc, oneshot};
 const TERMINAL_PARSER_ROWS: u16 = 50;
 const TERMINAL_PARSER_COLS: u16 = 120;
 
-pub async fn run(web_port: u16) {
+pub async fn run(web_addr: Option<std::net::SocketAddr>) {
     let hook_sock = paths::hook_socket_name();
     let client_sock = paths::client_socket_name();
     let state_path = paths::state_file_path();
@@ -39,7 +39,9 @@ pub async fn run(web_port: u16) {
     // Spawn listeners
     tokio::spawn(hook_listener::run(hook_tx));
     tokio::spawn(client_listener::run(client_tx.clone()));
-    tokio::spawn(crate::web::run(web_port, client_tx));
+    if let Some(addr) = web_addr {
+        tokio::spawn(crate::web::run(addr, client_tx.clone()));
+    }
 
     // Main loop state
     let mut state = DaemonState::new();

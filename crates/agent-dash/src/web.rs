@@ -17,11 +17,7 @@ struct AppState {
     client_tx: mpsc::Sender<ClientMessage>,
 }
 
-pub async fn run(port: u16, client_tx: mpsc::Sender<ClientMessage>) {
-    if port == 0 {
-        return;
-    }
-
+pub async fn run(addr: std::net::SocketAddr, client_tx: mpsc::Sender<ClientMessage>) {
     let state = AppState { client_tx };
 
     let app = Router::new()
@@ -31,10 +27,9 @@ pub async fn run(port: u16, client_tx: mpsc::Sender<ClientMessage>) {
         .route("/ws", get(ws_handler))
         .with_state(state);
 
-    let addr = format!("127.0.0.1:{port}");
     eprintln!("  web interface: http://{addr}");
 
-    let listener = tokio::net::TcpListener::bind(&addr)
+    let listener = tokio::net::TcpListener::bind(addr)
         .await
         .expect("failed to bind web server");
     axum::serve(listener, app).await.expect("web server error");

@@ -136,9 +136,10 @@ enum Commands {
 enum DaemonAction {
     /// Start the daemon
     Start {
-        /// Port for web interface (0 to disable)
-        #[arg(long, default_value = "3131")]
-        web_port: u16,
+        /// Bind address for web interface: IP, IP:PORT, or "none" to disable
+        /// (default: 127.0.0.1:3131)
+        #[arg(long, default_value = "127.0.0.1:3131")]
+        web_bind: String,
     },
     /// Stop the daemon
     Stop,
@@ -186,8 +187,8 @@ async fn main() {
             std::process::exit(exit_code);
         }
         Some(Commands::Daemon { action }) => match action {
-            DaemonAction::Start { web_port } => {
-                daemon::run(web_port).await;
+            DaemonAction::Start { web_bind } => {
+                daemon::run(parse_web_bind(&web_bind)).await;
             }
             DaemonAction::Stop => {
                 let pid_path = agent_dash_core::paths::pid_file_path();
@@ -314,4 +315,19 @@ async fn main() {
             }
         },
     }
+}
+
+fn parse_web_bind(s: &str) -> Option<std::net::SocketAddr> {
+    if s == "none" || s == "0" {
+        return None;
+    }
+    if let Ok(addr) = s.parse::<std::net::SocketAddr>() {
+        return Some(addr);
+    }
+    if let Ok(ip) = s.parse::<std::net::IpAddr>() {
+        return Some(std::net::SocketAddr::new(ip, 3131));
+    }
+    eprintln!("Invalid --web-bind value: {s}");
+    eprintln!("Expected: IP, IP:PORT, or \"none\"");
+    std::process::exit(1);
 }
