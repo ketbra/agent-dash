@@ -672,6 +672,7 @@
         send({ method: 'unwatch_terminal', session_id: selectedSessionId });
       }
     }
+    updateMobileKeys();
   }
 
   function toggleView() {
