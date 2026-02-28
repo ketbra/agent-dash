@@ -572,9 +572,26 @@ pub async fn run(web_port: u16) {
                         }
 
                         terminal_subscribers
-                            .entry(canonical)
+                            .entry(canonical.clone())
                             .or_default()
                             .push(tx);
+
+                        // Tell the wrapper to force a redraw so the child TUI
+                        // re-renders at the watcher's terminal dimensions.
+                        let wrapper_tx = wrapper_channels.get(&canonical).or_else(|| {
+                            let matches: Vec<_> = wrapper_channels
+                                .iter()
+                                .filter(|(k, _)| k.starts_with(&canonical))
+                                .collect();
+                            if matches.len() == 1 {
+                                Some(matches[0].1)
+                            } else {
+                                None
+                            }
+                        });
+                        if let Some(wrapper_tx) = wrapper_tx {
+                            let _ = wrapper_tx.try_send(ServerEvent::ForceRedraw);
+                        }
                     }
                     ClientMessage::UnwatchTerminal { session_id } => {
                         let canonical = resolve_session_key(&session_id, &state)

@@ -624,6 +624,30 @@ pub fn run(profile: &AgentProfile, args: &[String], opts: &RunOptions) -> i32 {
                                     }
                                     term_size_daemon.store(cols, rows);
                                 }
+                                ServerEvent::ForceRedraw => {
+                                    // Force the child TUI to redraw by sending
+                                    // a different size, waiting for the TUI's
+                                    // resize debounce to expire, then restoring
+                                    // the correct size.
+                                    let (cols, rows) = term_size_daemon.load();
+                                    if let Ok(m) = master_daemon.lock() {
+                                        let _ = m.resize(PtySize {
+                                            rows: rows.saturating_add(1),
+                                            cols,
+                                            pixel_width: 0,
+                                            pixel_height: 0,
+                                        });
+                                    }
+                                    std::thread::sleep(std::time::Duration::from_millis(300));
+                                    if let Ok(m) = master_daemon.lock() {
+                                        let _ = m.resize(PtySize {
+                                            rows,
+                                            cols,
+                                            pixel_width: 0,
+                                            pixel_height: 0,
+                                        });
+                                    }
+                                }
                                 _ => {}
                             }
                         }

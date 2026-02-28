@@ -242,6 +242,10 @@ pub enum ServerEvent {
     SessionCreated {
         session_id: String,
     },
+    /// Sent to a wrapper when a new terminal watcher connects, telling it to
+    /// force a redraw so the child TUI re-renders at the correct dimensions.
+    #[serde(rename = "force_redraw")]
+    ForceRedraw,
     #[serde(rename = "error")]
     Error {
         message: String,
