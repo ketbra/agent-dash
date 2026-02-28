@@ -785,6 +785,19 @@
     }
   }
 
+  // Shift the key bar above the virtual keyboard when it's open.
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', function () {
+      if (!isMobile) return;
+      var keyboardHeight = window.innerHeight - window.visualViewport.height;
+      if (keyboardHeight > 100) {
+        mobileKeys.style.bottom = (keyboardHeight + 12) + 'px';
+      } else {
+        mobileKeys.style.bottom = '';
+      }
+    });
+  }
+
   var keyMap = { up: '\x1b[A', down: '\x1b[B', enter: '\r' };
   mobileKeys.addEventListener('click', function (e) {
     var btn = e.target.closest('button[data-key]');
