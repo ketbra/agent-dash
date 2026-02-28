@@ -410,6 +410,13 @@ pub async fn run(web_port: u16) {
                         }
                         wrapper_channels.insert(session_id.clone(), wrapper_tx);
 
+                        // If terminal watchers exist (reconnect case), trigger a redraw.
+                        if terminal_subscribers.get(&session_id).is_some_and(|s| !s.is_empty()) {
+                            if let Some(tx) = wrapper_channels.get(&session_id) {
+                                let _ = tx.try_send(ServerEvent::ForceRedraw);
+                            }
+                        }
+
                         // On reconnect, re-link the real session_id to this wrapper's channel
                         // and resolve the JSONL path if missing.
                         if let Some(ref real_id) = real_session_id {

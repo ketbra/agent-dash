@@ -430,16 +430,20 @@ pub fn run(profile: &AgentProfile, args: &[String], opts: &RunOptions) -> i32 {
     // Channel for forwarding raw terminal output to the daemon (for web viewers).
     let (term_data_tx, term_data_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(64);
 
+    // Shared vt100 parser — the reader thread drives it; the daemon listener
+    // thread grabs a snapshot on reconnect to restore web viewers.
+    let parser = Arc::new(std::sync::Mutex::new(vt100::Parser::new(rows, cols, 0)));
+
     // --- PTY reader thread: reads agent output, writes to stdout (or discards in headless) ---
     let running_reader = running.clone();
     let term_size_reader = term_size.clone();
     let headless = opts.headless;
     let reader_handle = {
         let mut pty_reader = pty_reader;
+        let parser_reader = parser.clone();
         std::thread::spawn(move || {
             let mut stdout = if !headless { Some(std::io::stdout()) } else { None };
             let mut buf = [0u8; 4096];
-            let mut parser = vt100::Parser::new(rows, cols, 0);
             let mut last_update = ScreenUpdate { suggestion: None, thinking_text: None };
             let mut last_check = Instant::now();
             let debounce = std::time::Duration::from_millis(100);
@@ -460,27 +464,32 @@ pub fn run(profile: &AgentProfile, args: &[String], opts: &RunOptions) -> i32 {
                         // Forward raw bytes to terminal data channel for web viewers.
                         let _ = term_data_tx.try_send(buf[..n].to_vec());
 
-                        // Update parser size if terminal was resized.
-                        let (cur_cols, cur_rows) = term_size_reader.load();
-                        if (cur_cols, cur_rows) != last_parser_size {
-                            parser.screen_mut().set_size(cur_rows, cur_cols);
-                            last_parser_size = (cur_cols, cur_rows);
-                        }
+                        // Update parser and detect screen changes under lock.
+                        {
+                            let mut p = parser_reader.lock().unwrap();
 
-                        // Feed bytes to vt100 parser.
-                        parser.process(&buf[..n]);
+                            // Update parser size if terminal was resized.
+                            let (cur_cols, cur_rows) = term_size_reader.load();
+                            if (cur_cols, cur_rows) != last_parser_size {
+                                p.screen_mut().set_size(cur_rows, cur_cols);
+                                last_parser_size = (cur_cols, cur_rows);
+                            }
 
-                        // Debounced screen update detection.
-                        let now = Instant::now();
-                        if now.duration_since(last_check) >= debounce {
-                            last_check = now;
-                            let update = ScreenUpdate {
-                                suggestion: detect_suggestion(parser.screen()),
-                                thinking_text: detect_thinking_text(parser.screen()),
-                            };
-                            if update != last_update {
-                                last_update = update.clone();
-                                let _ = screen_tx.try_send(update);
+                            // Feed bytes to vt100 parser.
+                            p.process(&buf[..n]);
+
+                            // Debounced screen update detection.
+                            let now = Instant::now();
+                            if now.duration_since(last_check) >= debounce {
+                                last_check = now;
+                                let update = ScreenUpdate {
+                                    suggestion: detect_suggestion(p.screen()),
+                                    thinking_text: detect_thinking_text(p.screen()),
+                                };
+                                if update != last_update {
+                                    last_update = update.clone();
+                                    let _ = screen_tx.try_send(update);
+                                }
                             }
                         }
                     }
@@ -538,8 +547,15 @@ pub fn run(profile: &AgentProfile, args: &[String], opts: &RunOptions) -> i32 {
         let running_term = running.clone();
         let session_id_term = session_id.clone();
         std::thread::spawn(move || {
-            let Some(conn) = try_connect_daemon() else {
-                return;
+            // Initial connection with retry loop.
+            let mut conn = loop {
+                if !running_term.load(Ordering::Relaxed) {
+                    return;
+                }
+                if let Some(c) = try_connect_daemon() {
+                    break c;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(1));
             };
             let engine = base64::engine::general_purpose::STANDARD;
             while running_term.load(Ordering::Relaxed) {
@@ -559,7 +575,20 @@ pub fn run(profile: &AgentProfile, args: &[String], opts: &RunOptions) -> i32 {
                             data: b64,
                         };
                         if send_to_daemon(&conn, &req).is_err() {
-                            break;
+                            // Reconnect with exponential backoff.
+                            let mut delay = std::time::Duration::from_secs(1);
+                            let max_delay = std::time::Duration::from_secs(10);
+                            loop {
+                                if !running_term.load(Ordering::Relaxed) {
+                                    return;
+                                }
+                                std::thread::sleep(delay);
+                                if let Some(new_conn) = try_connect_daemon() {
+                                    conn = new_conn;
+                                    break;
+                                }
+                                delay = (delay * 2).min(max_delay);
+                            }
                         }
                     }
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
@@ -578,6 +607,7 @@ pub fn run(profile: &AgentProfile, args: &[String], opts: &RunOptions) -> i32 {
         let agent_name = profile.name.to_string();
         let master_daemon = master.clone();
         let term_size_daemon = term_size.clone();
+        let parser_daemon = parser.clone();
         std::thread::spawn(move || {
             let engine = base64::engine::general_purpose::STANDARD;
             let mut conn = conn;
@@ -686,6 +716,20 @@ pub fn run(profile: &AgentProfile, args: &[String], opts: &RunOptions) -> i32 {
                             real_session_id: None,
                         };
                         if send_to_daemon(&new_conn, &req).is_ok() {
+                            // Send current screen state for late-joining watchers.
+                            if let Ok(p) = parser_daemon.lock() {
+                                let snapshot = p.screen().contents_formatted();
+                                if !snapshot.is_empty() {
+                                    let b64 = engine.encode(&snapshot);
+                                    let _ = send_to_daemon(
+                                        &new_conn,
+                                        &ClientRequest::TerminalOutput {
+                                            session_id: session_id_daemon.clone(),
+                                            data: b64,
+                                        },
+                                    );
+                                }
+                            }
                             eprintln!("agent-dash: reconnected to daemon");
                             conn = new_conn;
                             break;
