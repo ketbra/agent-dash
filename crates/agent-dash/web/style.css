@@ -542,6 +542,10 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   display: none;
 }
 
+#mobile-terminal-input {
+  display: none;
+}
+
 @media (max-width: 768px) {
   #mobile-menu-btn {
     display: flex;
@@ -639,5 +643,46 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   #mobile-keys button:active {
     background: var(--accent);
     color: var(--bg);
+  }
+
+  #mobile-terminal-input {
+    display: flex;
+    gap: 8px;
+    padding: 8px 12px;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 10;
+    background: var(--bg-sidebar);
+    border-top: 1px solid var(--border);
+    transition: bottom 0.15s ease;
+  }
+
+  #mobile-terminal-text {
+    flex: 1;
+    padding: 10px 14px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 16px;
+    outline: none;
+  }
+
+  #mobile-terminal-text:focus {
+    border-color: var(--accent);
+  }
+
+  #mobile-terminal-send {
+    padding: 10px 16px;
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
   }
 }

@@ -40,6 +40,9 @@
   const mobileMenuBtn = document.getElementById('mobile-menu-btn');
   const backdrop = document.getElementById('backdrop');
   const mobileKeys = document.getElementById('mobile-keys');
+  const mobileTermInput = document.getElementById('mobile-terminal-input');
+  const mobileTermText = document.getElementById('mobile-terminal-text');
+  const mobileTermSend = document.getElementById('mobile-terminal-send');
 
   // --- WebSocket ---
   function connect() {
@@ -214,6 +217,7 @@
     updateSuggestion();
     updateThinking();
     updateMobileKeys();
+    updateMobileTermInput();
 
     // Fetch history then start watching
     send({ method: 'get_messages', session_id: id, format: 'html', limit: 100 });
@@ -223,7 +227,7 @@
     if (viewMode === 'terminal') {
       if (terminalInstance) {
         terminalInstance.reset();
-        terminalInstance.focus();
+        if (!isMobile) terminalInstance.focus();
         scheduleTerminalFit();
       }
       send({ method: 'watch_terminal', session_id: id });
@@ -656,7 +660,7 @@
         // Defer fit until the browser has laid out the now-visible container,
         // otherwise fitAddon reads stale/zero dimensions.
         scheduleTerminalFit();
-        if (terminalInstance) terminalInstance.focus();
+        if (terminalInstance && !isMobile) terminalInstance.focus();
         if (selectedSessionId) {
           send({ method: 'watch_terminal', session_id: selectedSessionId });
         }
@@ -673,6 +677,7 @@
       }
     }
     updateMobileKeys();
+    updateMobileTermInput();
   }
 
   function toggleView() {
@@ -720,6 +725,7 @@
       closeDrawer();
     }
     updateMobileKeys();
+    updateMobileTermInput();
   }
   mobileQuery.addEventListener('change', onMobileChange);
   onMobileChange(mobileQuery);
@@ -785,15 +791,17 @@
     }
   }
 
-  // Shift the key bar above the virtual keyboard when it's open.
+  // Shift the key bar and input bar above the virtual keyboard.
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', function () {
       if (!isMobile) return;
       var keyboardHeight = window.innerHeight - window.visualViewport.height;
       if (keyboardHeight > 100) {
         mobileKeys.style.bottom = (keyboardHeight + 12) + 'px';
+        mobileTermInput.style.bottom = keyboardHeight + 'px';
       } else {
         mobileKeys.style.bottom = '';
+        mobileTermInput.style.bottom = '';
       }
     });
   }
@@ -805,6 +813,30 @@
     var seq = keyMap[btn.dataset.key];
     if (seq) {
       send({ method: 'terminal_input', session_id: selectedSessionId, data: btoa(seq) });
+    }
+  });
+
+  // --- Mobile terminal text input ---
+  function updateMobileTermInput() {
+    if (!isMobile || viewMode !== 'terminal' || !selectedSessionId) {
+      mobileTermInput.classList.add('hidden');
+    } else {
+      mobileTermInput.classList.remove('hidden');
+    }
+  }
+
+  function sendMobileTermText() {
+    var text = mobileTermText.value;
+    if (!text || !selectedSessionId) return;
+    send({ method: 'terminal_input', session_id: selectedSessionId, data: btoa(text + '\r') });
+    mobileTermText.value = '';
+  }
+
+  mobileTermSend.onclick = sendMobileTermText;
+  mobileTermText.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      sendMobileTermText();
     }
   });
 
@@ -987,7 +1019,7 @@
   });
 
   function refocusActive() {
-    if (viewMode === 'terminal' && terminalInstance) {
+    if (viewMode === 'terminal' && terminalInstance && !isMobile) {
       terminalInstance.focus();
     } else {
       promptInput.focus();
