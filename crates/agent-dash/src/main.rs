@@ -172,7 +172,7 @@ async fn main() {
         Some(Commands::Run { agent, headless, cols, rows, session_id, cwd, args }) => {
             let profile = agents::lookup(&agent).unwrap_or_else(|| {
                 eprintln!("Unknown agent: {agent}");
-                eprintln!("Supported agents: claude");
+                eprintln!("Supported agents: {}", agents::SUPPORTED_NAMES.join(", "));
                 std::process::exit(1);
             });
             let opts = wrapper::RunOptions {

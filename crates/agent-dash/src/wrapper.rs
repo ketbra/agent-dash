@@ -263,13 +263,44 @@ impl Default for RunOptions {
 /// Run an agent inside a PTY wrapper.
 /// Blocks until the child process exits. Returns the exit code.
 pub fn run(profile: &AgentProfile, args: &[String], opts: &RunOptions) -> i32 {
-    // Check that the agent binary exists in PATH.
+    // Check that the agent binary exists in PATH; auto-install if missing.
     if which(profile.binary).is_none() {
         eprintln!(
-            "{} not found in PATH. Install it with:\n  {}",
-            profile.display_name, profile.install_hint
+            "{} not found in PATH. Installing...",
+            profile.display_name
         );
-        return 1;
+        eprintln!("  $ {}", profile.install_hint);
+
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(profile.install_hint)
+            .stdin(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .status();
+
+        match status {
+            Ok(s) if s.success() => {
+                if which(profile.binary).is_none() {
+                    eprintln!(
+                        "Install succeeded but {} still not found in PATH.",
+                        profile.binary
+                    );
+                    return 1;
+                }
+            }
+            Ok(s) => {
+                eprintln!(
+                    "Install command failed (exit {}).",
+                    s.code().unwrap_or(-1)
+                );
+                return 1;
+            }
+            Err(e) => {
+                eprintln!("Failed to run install command: {e}");
+                return 1;
+            }
+        }
     }
 
     // Ensure daemon is running (auto-start if needed).

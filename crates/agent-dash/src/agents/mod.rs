@@ -1,4 +1,5 @@
 pub mod claude;
+pub mod codex;
 
 /// Describes a supported agent binary.
 #[derive(Debug, Clone)]
@@ -13,10 +14,14 @@ pub struct AgentProfile {
     pub install_hint: &'static str,
 }
 
+/// All supported agent names (for help text).
+pub const SUPPORTED_NAMES: &[&str] = &["claude", "codex"];
+
 /// Look up an agent profile by name. Returns None if unknown.
 pub fn lookup(name: &str) -> Option<&'static AgentProfile> {
     match name {
         "claude" => Some(&claude::PROFILE),
+        "codex" => Some(&codex::PROFILE),
         _ => None,
     }
 }
@@ -30,6 +35,13 @@ mod tests {
         let profile = lookup("claude").unwrap();
         assert_eq!(profile.name, "claude");
         assert_eq!(profile.binary, "claude");
+    }
+
+    #[test]
+    fn lookup_codex() {
+        let profile = lookup("codex").unwrap();
+        assert_eq!(profile.name, "codex");
+        assert_eq!(profile.binary, "codex");
     }
 
     #[test]
