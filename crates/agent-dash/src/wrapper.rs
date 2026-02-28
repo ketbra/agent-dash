@@ -269,11 +269,19 @@ pub fn run(profile: &AgentProfile, args: &[String], opts: &RunOptions) -> i32 {
             "{} not found in PATH. Installing...",
             profile.display_name
         );
-        eprintln!("  $ {}", profile.install_hint);
+        let hint = profile.install_hint.current();
+        eprintln!("  $ {}", hint);
 
-        let status = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(profile.install_hint)
+        let mut cmd = if cfg!(target_os = "windows") {
+            let mut c = std::process::Command::new("cmd");
+            c.arg("/C").arg(hint);
+            c
+        } else {
+            let mut c = std::process::Command::new("sh");
+            c.arg("-c").arg(hint);
+            c
+        };
+        let status = cmd
             .stdin(std::process::Stdio::inherit())
             .stdout(std::process::Stdio::inherit())
             .stderr(std::process::Stdio::inherit())
