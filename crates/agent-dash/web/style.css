@@ -15,11 +15,13 @@
   --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
-html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font-sans); }
+html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--font-sans); }
 
 #app {
   display: flex;
   height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
 }
 
 #sidebar {
@@ -373,6 +375,10 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   padding: 4px;
 }
 
+#terminal-view .xterm-screen {
+  touch-action: none;
+}
+
 /* --- Modal --- */
 .modal-overlay {
   position: fixed;
@@ -505,4 +511,100 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   height: 100%;
   color: var(--text-dim);
   font-size: 15px;
+}
+
+#mobile-menu-btn {
+  display: none;
+  width: 40px;
+  height: 40px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 22px;
+  cursor: pointer;
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 10;
+  border-radius: 6px;
+}
+
+#mobile-menu-btn:hover {
+  color: var(--text);
+  background: var(--bg-surface);
+}
+
+#backdrop {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  #mobile-menu-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #main {
+    position: relative;
+    width: 100%;
+  }
+
+  /* Push content below the hamburger area */
+  #messages { padding-top: 52px; }
+  #terminal-view { padding-top: 44px; }
+  #permission-banner { margin-top: 44px; }
+
+  /* Sidebar becomes a fixed drawer, off-screen by default */
+  #sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 80%;
+    max-width: 320px;
+    min-width: 0;
+    height: 100%;
+    z-index: 200;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+  }
+
+  #sidebar.mobile-open {
+    transform: translateX(0);
+  }
+
+  /* Disable desktop collapse on mobile */
+  #sidebar.collapsed {
+    width: 80%;
+    max-width: 320px;
+    padding: 16px;
+  }
+  #sidebar.collapsed #sidebar-header { flex-direction: row; gap: 0; }
+  #sidebar.collapsed #sidebar-header h2 { display: block; }
+  #sidebar.collapsed #sidebar-header > div { flex-direction: row; }
+  #sidebar.collapsed #session-list li { padding: 10px 12px; text-align: left; }
+  #sidebar.collapsed .session-project,
+  #sidebar.collapsed .session-branch,
+  #sidebar.collapsed .session-meta { display: flex; }
+  #sidebar.collapsed .session-abbrev { display: none; }
+
+  /* Hide the desktop collapse button on mobile */
+  #collapse-btn { display: none !important; }
+
+  /* Backdrop overlay */
+  #backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 199;
+    background: rgba(0, 0, 0, 0.5);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+  }
+
+  #backdrop.visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }

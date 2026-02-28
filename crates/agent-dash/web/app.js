@@ -15,6 +15,7 @@
   let xtermLoading = false;
   let terminalFitTimer = null;
   let terminalResizeObserver = null;
+  let isMobile = false;
 
   // --- DOM refs ---
   const sessionList = document.getElementById('session-list');
@@ -36,6 +37,8 @@
   const modalCwdSuggestions = document.getElementById('modal-cwd-suggestions');
   const modalCancel = document.getElementById('modal-cancel');
   const modalCreate = document.getElementById('modal-create');
+  const mobileMenuBtn = document.getElementById('mobile-menu-btn');
+  const backdrop = document.getElementById('backdrop');
 
   // --- WebSocket ---
   function connect() {
@@ -200,6 +203,7 @@
     }
 
     selectedSessionId = id;
+    if (isMobile) closeDrawer();
     renderSessions();
     messagesEl.innerHTML = '<div id="empty-state">Loading...</div>';
     if (viewMode !== 'terminal') promptForm.classList.remove('hidden');
@@ -565,6 +569,69 @@
         return true;
       });
 
+      // Touch scroll: translate finger drags into terminal scrollLines()
+      // with momentum/flick support for native-feeling mobile scroll.
+      (function () {
+        var screen = terminalView.querySelector('.xterm-screen') || terminalView;
+        var lastY = null;
+        var lastTime = 0;
+        var accum = 0;
+        var velocity = 0;
+        var momentumId = null;
+        var SPEED = 2.5;
+        var lineHeight = Math.ceil(terminalInstance._core._renderService.dimensions.css.cell.height) || 15;
+
+        screen.addEventListener('touchstart', function (e) {
+          if (e.touches.length === 1) {
+            if (momentumId) { cancelAnimationFrame(momentumId); momentumId = null; }
+            lastY = e.touches[0].clientY;
+            lastTime = Date.now();
+            accum = 0;
+            velocity = 0;
+          }
+        }, { passive: true });
+
+        screen.addEventListener('touchmove', function (e) {
+          if (lastY !== null && e.touches.length === 1) {
+            var now = Date.now();
+            var y = e.touches[0].clientY;
+            var dy = lastY - y;
+            var dt = now - lastTime;
+            lastY = y;
+            lastTime = now;
+            if (dt > 0) velocity = dy / dt;
+            accum += dy * SPEED;
+            var lines = Math.trunc(accum / lineHeight);
+            if (lines !== 0) {
+              terminalInstance.scrollLines(lines);
+              accum -= lines * lineHeight;
+            }
+            e.preventDefault();
+          }
+        }, { passive: false });
+
+        screen.addEventListener('touchend', function () {
+          lastY = null;
+          if (Math.abs(velocity) < 0.3) { accum = 0; return; }
+          // Momentum: carry the flick velocity with friction decay.
+          var v = velocity * lineHeight * SPEED;
+          var mAccum = 0;
+          function step() {
+            v *= 0.95;
+            if (Math.abs(v) < 0.5) return;
+            mAccum += v;
+            var lines = Math.trunc(mAccum / lineHeight);
+            if (lines !== 0) {
+              terminalInstance.scrollLines(lines);
+              mAccum -= lines * lineHeight;
+            }
+            momentumId = requestAnimationFrame(step);
+          }
+          momentumId = requestAnimationFrame(step);
+          accum = 0;
+        }, { passive: true });
+      })();
+
       xtermLoaded = true;
     } catch (e) {
       console.error('Failed to load xterm.js:', e);
@@ -622,6 +689,83 @@
       sendTerminalSize();
     }
   });
+
+  // --- Mobile drawer ---
+  function openDrawer() {
+    sidebar.classList.add('mobile-open');
+    backdrop.classList.add('visible');
+  }
+
+  function closeDrawer() {
+    sidebar.classList.remove('mobile-open');
+    backdrop.classList.remove('visible');
+    if (viewMode === 'terminal' && fitAddon) {
+      setTimeout(function () { fitAddon.fit(); sendTerminalSize(); }, 260);
+    }
+  }
+
+  mobileMenuBtn.onclick = openDrawer;
+  backdrop.onclick = closeDrawer;
+
+  // Track mobile state via matchMedia.
+  var mobileQuery = window.matchMedia('(max-width: 768px)');
+  function onMobileChange(e) {
+    isMobile = e.matches;
+    if (!isMobile) {
+      closeDrawer();
+    }
+  }
+  mobileQuery.addEventListener('change', onMobileChange);
+  onMobileChange(mobileQuery);
+
+  // Edge swipe: swipe right from left edge opens drawer,
+  // swipe left on open drawer closes it.
+  (function () {
+    var startX = null;
+    var startY = null;
+    var tracking = false;
+
+    document.addEventListener('touchstart', function (e) {
+      if (!isMobile) return;
+      var touch = e.touches[0];
+      // Only track touches starting near the left edge, or on the open sidebar.
+      if (touch.clientX < 25) {
+        startX = touch.clientX;
+        startY = touch.clientY;
+        tracking = true;
+      } else if (sidebar.classList.contains('mobile-open')) {
+        startX = touch.clientX;
+        startY = touch.clientY;
+        tracking = true;
+      }
+    }, { passive: true });
+
+    document.addEventListener('touchmove', function (e) {
+      if (!tracking || startX === null) return;
+      var dx = e.touches[0].clientX - startX;
+      var dy = e.touches[0].clientY - startY;
+      // Ignore if more vertical than horizontal.
+      if (Math.abs(dy) > Math.abs(dx)) {
+        tracking = false;
+        return;
+      }
+    }, { passive: true });
+
+    document.addEventListener('touchend', function (e) {
+      if (!tracking || startX === null) return;
+      var endX = e.changedTouches[0].clientX;
+      var dx = endX - startX;
+      startX = null;
+      startY = null;
+      tracking = false;
+
+      if (dx > 60 && !sidebar.classList.contains('mobile-open')) {
+        openDrawer();
+      } else if (dx < -60 && sidebar.classList.contains('mobile-open')) {
+        closeDrawer();
+      }
+    }, { passive: true });
+  })();
 
   function sendTerminalSize() {
     if (!selectedSessionId || !terminalInstance) return;
