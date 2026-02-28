@@ -733,7 +733,8 @@
         startX = touch.clientX;
         startY = touch.clientY;
         tracking = true;
-      } else if (sidebar.classList.contains('mobile-open')) {
+      } else if (sidebar.classList.contains('mobile-open') &&
+                 (e.target === backdrop || sidebar.contains(e.target))) {
         startX = touch.clientX;
         startY = touch.clientY;
         tracking = true;
