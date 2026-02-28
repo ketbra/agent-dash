@@ -47,19 +47,39 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 #sidebar.collapsed #sidebar-header > div { flex-direction: column; }
 
 #sidebar.collapsed #session-list li {
-  padding: 6px 4px;
+  padding: 4px 2px;
   text-align: center;
 }
 
 #sidebar.collapsed .session-project,
 #sidebar.collapsed .session-branch,
-#sidebar.collapsed .session-meta span:not(.status-dot) {
+#sidebar.collapsed .session-meta {
   display: none;
 }
 
-#sidebar.collapsed .session-meta {
+#sidebar.collapsed .session-abbrev {
+  display: flex;
+  align-items: center;
   justify-content: center;
-  gap: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  margin: 0 auto;
+  position: relative;
+}
+
+#sidebar.collapsed #session-list li.active .session-abbrev {
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+#sidebar.collapsed #session-list li:hover .session-abbrev {
+  color: var(--text);
 }
 
 #sidebar-header {
@@ -78,7 +98,6 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 
 #new-session-btn,
 #view-toggle-btn,
-#resize-btn,
 #collapse-btn {
   width: 28px;
   height: 28px;
@@ -97,7 +116,6 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 
 #new-session-btn:hover,
 #view-toggle-btn:hover,
-#resize-btn:hover,
 #collapse-btn:hover {
   color: var(--accent);
   border-color: var(--accent);
@@ -123,6 +141,7 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 #session-list li:hover { background: var(--bg-surface); }
 #session-list li.active { background: var(--bg-surface); border-left: 3px solid var(--accent); }
 
+.session-abbrev { display: none; }
 .session-project { font-weight: 600; color: var(--text); }
 .session-branch { color: var(--text-dim); font-size: 12px; }
 .session-meta { display: flex; align-items: center; gap: 6px; margin-top: 4px; }

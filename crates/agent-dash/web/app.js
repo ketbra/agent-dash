@@ -27,7 +27,6 @@
   const thinkingEl = document.getElementById('thinking-indicator');
   const terminalView = document.getElementById('terminal-view');
   const viewToggleBtn = document.getElementById('view-toggle-btn');
-  const resizeBtn = document.getElementById('resize-btn');
   const collapseBtn = document.getElementById('collapse-btn');
   const sidebar = document.getElementById('sidebar');
   const newSessionBtn = document.getElementById('new-session-btn');
@@ -161,7 +160,12 @@
         ? ' <span class="badge">!</span>'
         : '';
 
+      var agentLabel = s.agent || s.project_name || '??';
+      var abbrev = agentLabel.substring(0, 2).toUpperCase();
+      var fullTitle = s.project_name + (s.branch ? ' (' + s.branch + ')' : '');
+
       li.innerHTML =
+        '<div class="session-abbrev" title="' + escapeHtml(fullTitle) + '">' + escapeHtml(abbrev) + '</div>' +
         '<div class="session-project">' + escapeHtml(s.project_name) + subagentBadge + permBadge + '</div>' +
         '<div class="session-branch">' + escapeHtml(s.branch || '') + '</div>' +
         '<div class="session-meta">' +
@@ -593,11 +597,6 @@
       sendTerminalSize();
     }
   });
-
-  resizeBtn.onclick = function () {
-    console.log('[resize] manual resize button clicked');
-    scheduleTerminalFit();
-  };
 
   function sendTerminalSize() {
     if (!selectedSessionId || !terminalInstance) return;
