@@ -13,6 +13,8 @@
   let fitAddon = null;
   let xtermLoaded = false;
   let xtermLoading = false;
+  let terminalFitTimer = null;
+  let terminalResizeObserver = null;
 
   // --- DOM refs ---
   const sessionList = document.getElementById('session-list');
@@ -197,11 +199,24 @@
     if (viewMode === 'terminal') {
       if (terminalInstance) {
         terminalInstance.clear();
-        if (fitAddon) fitAddon.fit();
+        scheduleTerminalFit();
       }
       send({ method: 'watch_terminal', session_id: id });
-      sendTerminalSize();
     }
+  }
+
+  function scheduleTerminalFit(delayMs) {
+    clearTimeout(terminalFitTimer);
+    terminalFitTimer = setTimeout(function () {
+      // Session/view changes can alter surrounding layout (banner/prompt visibility).
+      // Wait until at least one paint completes before fitting.
+      requestAnimationFrame(function () {
+        if (viewMode === 'terminal' && terminalInstance && fitAddon && !terminalView.classList.contains('hidden')) {
+          fitAddon.fit();
+          sendTerminalSize();
+        }
+      });
+    }, delayMs || 0);
   }
 
   // --- Messages ---
@@ -497,6 +512,18 @@
       terminalInstance.open(terminalView);
       terminalInstance.loadAddon(new webglMod.WebglAddon());
 
+      if (!terminalResizeObserver && typeof ResizeObserver !== 'undefined') {
+        terminalResizeObserver = new ResizeObserver(function () {
+          scheduleTerminalFit();
+        });
+        terminalResizeObserver.observe(terminalView);
+      }
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(function () {
+          scheduleTerminalFit();
+        });
+      }
+
       // Forward terminal input to the daemon as raw bytes.
       terminalInstance.onData(function (data) {
         if (selectedSessionId) {
@@ -521,12 +548,7 @@
       loadXterm().then(function () {
         // Defer fit until the browser has laid out the now-visible container,
         // otherwise fitAddon reads stale/zero dimensions.
-        requestAnimationFrame(function () {
-          if (terminalInstance && fitAddon) {
-            fitAddon.fit();
-          }
-          sendTerminalSize();
-        });
+        scheduleTerminalFit();
         if (selectedSessionId) {
           send({ method: 'watch_terminal', session_id: selectedSessionId });
         }
@@ -565,12 +587,9 @@
   };
 
   // Refit terminal on window resize.
-  var resizeTimer = null;
   window.addEventListener('resize', function () {
     if (viewMode === 'terminal' && fitAddon) {
-      fitAddon.fit();
-      clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(sendTerminalSize, 150);
+      scheduleTerminalFit(150);
     }
   });
 
