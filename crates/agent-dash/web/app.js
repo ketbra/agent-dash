@@ -728,8 +728,9 @@
     document.addEventListener('touchstart', function (e) {
       if (!isMobile) return;
       var touch = e.touches[0];
-      // Only track touches starting near the left edge, or on the open sidebar.
-      if (touch.clientX < 25) {
+      // Track touches starting within 50px of the left edge (inward of
+      // Android Chrome's ~20px back-gesture zone), or on the open sidebar.
+      if (touch.clientX < 50) {
         startX = touch.clientX;
         startY = touch.clientY;
         tracking = true;
