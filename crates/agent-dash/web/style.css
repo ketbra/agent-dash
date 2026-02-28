@@ -538,6 +538,10 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   display: none;
 }
 
+#mobile-keys {
+  display: none;
+}
+
 @media (max-width: 768px) {
   #mobile-menu-btn {
     display: flex;
@@ -606,5 +610,34 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   #backdrop.visible {
     opacity: 1;
     pointer-events: auto;
+  }
+
+  #mobile-keys {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    padding: 8px;
+    position: absolute;
+    bottom: 8px;
+    left: 0;
+    right: 0;
+    z-index: 10;
+  }
+
+  #mobile-keys button {
+    width: 56px;
+    height: 44px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    color: var(--text);
+    font-size: 20px;
+    cursor: pointer;
+    opacity: 0.85;
+  }
+
+  #mobile-keys button:active {
+    background: var(--accent);
+    color: var(--bg);
   }
 }

@@ -39,6 +39,7 @@
   const modalCreate = document.getElementById('modal-create');
   const mobileMenuBtn = document.getElementById('mobile-menu-btn');
   const backdrop = document.getElementById('backdrop');
+  const mobileKeys = document.getElementById('mobile-keys');
 
   // --- WebSocket ---
   function connect() {
@@ -105,6 +106,7 @@
         pendingPermissions[data.session_id] = data;
         updatePermissions();
         renderSessions();
+        updateMobileKeys();
         break;
       case 'permission_resolved':
         // Remove resolved permission
@@ -115,6 +117,7 @@
         }
         updatePermissions();
         renderSessions();
+        updateMobileKeys();
         break;
       case 'terminal_data':
         if (terminalInstance && data.data) {
@@ -210,6 +213,7 @@
     updatePermissions();
     updateSuggestion();
     updateThinking();
+    updateMobileKeys();
 
     // Fetch history then start watching
     send({ method: 'get_messages', session_id: id, format: 'html', limit: 100 });
@@ -714,6 +718,7 @@
     if (!isMobile) {
       closeDrawer();
     }
+    updateMobileKeys();
   }
   mobileQuery.addEventListener('change', onMobileChange);
   onMobileChange(mobileQuery);
@@ -768,6 +773,26 @@
       }
     }, { passive: true });
   })();
+
+  // --- Mobile arrow key bar ---
+  function updateMobileKeys() {
+    if (!isMobile || viewMode !== 'terminal' || !selectedSessionId ||
+        !pendingPermissions[selectedSessionId]) {
+      mobileKeys.classList.add('hidden');
+    } else {
+      mobileKeys.classList.remove('hidden');
+    }
+  }
+
+  var keyMap = { up: '\x1b[A', down: '\x1b[B', enter: '\r' };
+  mobileKeys.addEventListener('click', function (e) {
+    var btn = e.target.closest('button[data-key]');
+    if (!btn || !selectedSessionId) return;
+    var seq = keyMap[btn.dataset.key];
+    if (seq) {
+      send({ method: 'terminal_input', session_id: selectedSessionId, data: btoa(seq) });
+    }
+  });
 
   function sendTerminalSize() {
     if (!selectedSessionId || !terminalInstance) return;
