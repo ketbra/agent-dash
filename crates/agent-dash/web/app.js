@@ -8,7 +8,7 @@
   let selectedSessionId = null;
   let pendingPermissions = {}; // session_id -> permission info
   let pendingImages = []; // [{mime_type, data, dataUrl}]
-  let viewMode = 'messages';  // 'messages' | 'terminal'
+  let viewMode = 'terminal';  // 'messages' | 'terminal'
   let terminalInstance = null;
   let fitAddon = null;
   let xtermLoaded = false;
@@ -25,6 +25,9 @@
   const thinkingEl = document.getElementById('thinking-indicator');
   const terminalView = document.getElementById('terminal-view');
   const viewToggleBtn = document.getElementById('view-toggle-btn');
+  const resizeBtn = document.getElementById('resize-btn');
+  const collapseBtn = document.getElementById('collapse-btn');
+  const sidebar = document.getElementById('sidebar');
   const newSessionBtn = document.getElementById('new-session-btn');
 
   // --- WebSocket ---
@@ -197,10 +200,15 @@
     if (viewMode === 'terminal') {
       if (terminalInstance) {
         terminalInstance.clear();
-        if (fitAddon) fitAddon.fit();
+        terminalInstance.focus();
       }
-      send({ method: 'watch_terminal', session_id: id });
+      // Resize PTY before watching so dimensions are correct for replay
       sendTerminalSize();
+      send({ method: 'watch_terminal', session_id: id });
+      // Force xterm.js to re-render its canvas via native resize event
+      forceTerminalRefit();
+    } else {
+      promptInput.focus();
     }
   }
 
@@ -516,16 +524,16 @@
     if (mode === 'terminal') {
       messagesEl.classList.add('hidden');
       promptForm.classList.add('hidden');
+      permBanner.classList.add('hidden');
+      thinkingEl.classList.add('hidden');
       terminalView.classList.remove('hidden');
       viewToggleBtn.classList.add('active');
       loadXterm().then(function () {
         // Defer fit until the browser has laid out the now-visible container,
         // otherwise fitAddon reads stale/zero dimensions.
         requestAnimationFrame(function () {
-          if (terminalInstance && fitAddon) {
-            fitAddon.fit();
-          }
-          sendTerminalSize();
+          forceTerminalRefit();
+          if (terminalInstance) terminalInstance.focus();
         });
         if (selectedSessionId) {
           send({ method: 'watch_terminal', session_id: selectedSessionId });
@@ -538,6 +546,7 @@
       viewToggleBtn.classList.remove('active');
       updatePermissions();
       if (selectedSessionId) {
+        promptInput.focus();
         send({ method: 'unwatch_terminal', session_id: selectedSessionId });
       }
     }
@@ -549,8 +558,63 @@
 
   viewToggleBtn.onclick = toggleView;
 
+  collapseBtn.onclick = function () {
+    sidebar.classList.toggle('collapsed');
+    collapseBtn.innerHTML = sidebar.classList.contains('collapsed') ? '&#9654;' : '&#9664;';
+  };
+
+  // After sidebar transition completes, refit terminal to new container size.
+  sidebar.addEventListener('transitionend', function (e) {
+    if (e.propertyName === 'width' && viewMode === 'terminal' && fitAddon) {
+      fitAddon.fit();
+      sendTerminalSize();
+    }
+  });
+
+  // Force xterm.js to re-render by cycling to a different size then fitting back.
+  // fitAddon.fit() alone skips if cols/rows haven't changed, which means no re-render.
+  function logLayoutState(label) {
+    var main = document.getElementById('main');
+    var tv = terminalView;
+    var pf = promptForm;
+    var msg = messagesEl;
+    var pb = permBanner;
+    var ti = thinkingEl;
+    console.log('[layout ' + label + '] main=' + main.offsetHeight +
+      ' terminal-view=' + tv.offsetHeight + '(' + (tv.classList.contains('hidden') ? 'HIDDEN' : 'visible') + ')' +
+      ' messages=' + msg.offsetHeight + '(' + (msg.classList.contains('hidden') ? 'HIDDEN' : 'visible') + ')' +
+      ' prompt-form=' + pf.offsetHeight + '(' + (pf.classList.contains('hidden') ? 'HIDDEN' : 'visible') + ')' +
+      ' perm-banner=' + pb.offsetHeight + '(' + (pb.classList.contains('hidden') ? 'HIDDEN' : 'visible') + ')' +
+      ' thinking=' + ti.offsetHeight + '(' + (ti.classList.contains('hidden') ? 'HIDDEN' : 'visible') + ')');
+    if (terminalInstance) {
+      var proposed = fitAddon ? fitAddon.proposeDimensions() : null;
+      console.log('[layout ' + label + '] xterm cols=' + terminalInstance.cols + ' rows=' + terminalInstance.rows +
+        ' proposed=' + (proposed ? proposed.cols + 'x' + proposed.rows : 'null'));
+    }
+  }
+
+  function forceTerminalRefit() {
+    if (!terminalInstance || !fitAddon) return;
+    logLayoutState('before-refit');
+    fitAddon.fit();
+    // Dispatch a native resize event — xterm.js listens for this internally
+    // to re-render its canvas, even when dimensions haven't changed.
+    window.dispatchEvent(new Event('resize'));
+    logLayoutState('after-refit');
+  }
+
+  resizeBtn.onclick = function () {
+    console.log('[resize] manual resize button clicked');
+    forceTerminalRefit();
+  };
+
   function sendTerminalSize() {
-    if (!selectedSessionId || !terminalInstance) return;
+    if (!selectedSessionId || !terminalInstance) {
+      console.log('[resize] skipped: selectedSessionId=' + selectedSessionId + ' terminalInstance=' + !!terminalInstance);
+      return;
+    }
+    console.log('[resize] sending terminal_resize session=' + selectedSessionId + ' cols=' + terminalInstance.cols + ' rows=' + terminalInstance.rows);
+    console.trace('[resize] call stack');
     send({
       method: 'terminal_resize',
       session_id: selectedSessionId,
@@ -592,5 +656,6 @@
 
   // --- Init ---
   messagesEl.innerHTML = '<div id="empty-state">Select a session to view</div>';
+  setViewMode(viewMode);
   connect();
 })();
