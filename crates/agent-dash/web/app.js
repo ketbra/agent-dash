@@ -43,6 +43,9 @@
   const mobileTermInput = document.getElementById('mobile-terminal-input');
   const mobileTermText = document.getElementById('mobile-terminal-text');
   const mobileTermSend = document.getElementById('mobile-terminal-send');
+  const mobileKbBtn = document.getElementById('mobile-kb-btn');
+  const mobileImagePreviews = document.getElementById('mobile-image-previews');
+  var mobileKbOpen = false;
 
   // --- WebSocket ---
   function connect() {
@@ -320,32 +323,40 @@
     }
   });
 
+  function createImagePreviewItem(img, idx) {
+    var item = document.createElement('div');
+    item.className = 'image-preview-item';
+
+    var imgEl = document.createElement('img');
+    imgEl.src = img.dataUrl;
+    item.appendChild(imgEl);
+
+    var removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'image-remove';
+    removeBtn.textContent = '\u00d7';
+    removeBtn.onclick = function () {
+      pendingImages.splice(idx, 1);
+      renderImagePreviews();
+    };
+    item.appendChild(removeBtn);
+
+    return item;
+  }
+
   function renderImagePreviews() {
     imagePreviewsEl.innerHTML = '';
+    mobileImagePreviews.innerHTML = '';
     if (pendingImages.length === 0) {
       imagePreviewsEl.classList.add('hidden');
+      mobileImagePreviews.classList.add('hidden');
       return;
     }
     imagePreviewsEl.classList.remove('hidden');
+    mobileImagePreviews.classList.remove('hidden');
     pendingImages.forEach(function (img, idx) {
-      const item = document.createElement('div');
-      item.className = 'image-preview-item';
-
-      const imgEl = document.createElement('img');
-      imgEl.src = img.dataUrl;
-      item.appendChild(imgEl);
-
-      const removeBtn = document.createElement('button');
-      removeBtn.type = 'button';
-      removeBtn.className = 'image-remove';
-      removeBtn.textContent = '\u00d7';
-      removeBtn.onclick = function () {
-        pendingImages.splice(idx, 1);
-        renderImagePreviews();
-      };
-      item.appendChild(removeBtn);
-
-      imagePreviewsEl.appendChild(item);
+      imagePreviewsEl.appendChild(createImagePreviewItem(img, idx));
+      mobileImagePreviews.appendChild(createImagePreviewItem(img, idx));
     });
   }
 
@@ -791,17 +802,30 @@
     }
   }
 
-  // Shift the key bar and input bar above the virtual keyboard.
+  // Shift floating UI above virtual keyboard and resize terminal to fit.
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', function () {
       if (!isMobile) return;
-      var keyboardHeight = window.innerHeight - window.visualViewport.height;
-      if (keyboardHeight > 100) {
-        mobileKeys.style.bottom = (keyboardHeight + 12) + 'px';
-        mobileTermInput.style.bottom = keyboardHeight + 'px';
+      var kbHeight = window.innerHeight - window.visualViewport.height;
+      if (kbHeight > 100) {
+        mobileKeys.style.bottom = (kbHeight + 12) + 'px';
+        mobileTermInput.style.bottom = kbHeight + 'px';
+        mobileKbBtn.style.bottom = (kbHeight + (mobileKbOpen ? 60 : 12)) + 'px';
+        // Shrink terminal so content above keyboard stays visible
+        var inputBarH = mobileKbOpen ? 52 : 0;
+        terminalView.style.paddingBottom = (kbHeight + inputBarH) + 'px';
+        scheduleTerminalFit();
       } else {
         mobileKeys.style.bottom = '';
         mobileTermInput.style.bottom = '';
+        mobileKbBtn.style.bottom = '';
+        terminalView.style.paddingBottom = '';
+        // Auto-hide input bar when keyboard is dismissed
+        if (mobileKbOpen) {
+          hideMobileKeyboard();
+        } else {
+          scheduleTerminalFit();
+        }
       }
     });
   }
@@ -820,15 +844,57 @@
   function updateMobileTermInput() {
     if (!isMobile || viewMode !== 'terminal' || !selectedSessionId) {
       mobileTermInput.classList.add('hidden');
+      mobileKbBtn.classList.add('hidden');
+      if (mobileKbOpen) {
+        mobileKbOpen = false;
+        terminalView.style.paddingBottom = '';
+      }
     } else {
-      mobileTermInput.classList.remove('hidden');
+      mobileKbBtn.classList.remove('hidden');
+      // Input bar is toggled by the keyboard button, not shown automatically
     }
   }
 
+  function showMobileKeyboard() {
+    mobileKbOpen = true;
+    mobileTermInput.classList.remove('hidden');
+    mobileTermText.focus();
+  }
+
+  function hideMobileKeyboard() {
+    mobileKbOpen = false;
+    mobileTermInput.classList.add('hidden');
+    mobileTermText.blur();
+    terminalView.style.paddingBottom = '';
+    scheduleTerminalFit();
+  }
+
+  mobileKbBtn.onclick = function () {
+    if (mobileKbOpen) {
+      hideMobileKeyboard();
+    } else {
+      showMobileKeyboard();
+    }
+  };
+
   function sendMobileTermText() {
     var text = mobileTermText.value;
-    if (!text || !selectedSessionId) return;
-    send({ method: 'terminal_input', session_id: selectedSessionId, data: btoa(text + '\r') });
+    if (!text && pendingImages.length === 0) return;
+    if (!selectedSessionId) return;
+
+    if (pendingImages.length > 0) {
+      // Send as prompt with images
+      var msg = { method: 'send_prompt', session_id: selectedSessionId, text: text || '' };
+      msg.images = pendingImages.map(function (img) {
+        return { mime_type: img.mime_type, data: img.data };
+      });
+      pendingImages = [];
+      renderImagePreviews();
+      send(msg);
+    } else {
+      // Send as raw terminal input
+      send({ method: 'terminal_input', session_id: selectedSessionId, data: btoa(text + '\r') });
+    }
     mobileTermText.value = '';
   }
 
