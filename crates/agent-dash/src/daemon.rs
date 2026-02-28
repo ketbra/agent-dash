@@ -96,38 +96,41 @@ pub async fn run(web_addr: Option<std::net::SocketAddr>) {
                     }
                 }
 
-                // Check if a ToolStart or Stop resolves a pending permission
-                // (user approved via terminal rather than through us).
-                match &event {
-                    HookEvent::ToolStart { session_id, .. } | HookEvent::Stop { session_id } => {
-                        // Find any pending permissions for this session.
-                        let pending_ids: Vec<String> = state
-                            .pending_permissions
-                            .iter()
-                            .filter(|(_, p)| p.session_id == *session_id)
-                            .map(|(id, _)| id.clone())
-                            .collect();
+                // Any hook event for a session means Claude has moved past
+                // any pending permission prompt — resolve it. Previously
+                // only ToolStart/Stop triggered this, but if the user
+                // denies a tool via the terminal, neither fires.
+                {
+                    let session_id = match &event {
+                        HookEvent::ToolStart { session_id, .. }
+                        | HookEvent::ToolEnd { session_id, .. }
+                        | HookEvent::Stop { session_id }
+                        | HookEvent::SessionStart { session_id, .. }
+                        | HookEvent::SessionEnd { session_id } => session_id,
+                    };
+                    let pending_ids: Vec<String> = state
+                        .pending_permissions
+                        .iter()
+                        .filter(|(_, p)| p.session_id == *session_id)
+                        .map(|(id, _)| id.clone())
+                        .collect();
 
-                        for request_id in pending_ids {
-                            if let Some(perm) = state.resolve_permission(&request_id) {
-                                // Notify the waiting hook if present.
-                                if let Some(waiter) = permission_waiters.remove(&request_id) {
-                                    let _ = waiter.send(HookPermissionDecision {
-                                        request_id: request_id.clone(),
-                                        decision: "allow".into(),
-                                        suggestion: None,
-                                    });
-                                }
-                                // Broadcast resolution.
-                                let resolved = ServerEvent::PermissionResolved {
-                                    request_id: perm.request_id,
-                                    resolved_by: "terminal".into(),
-                                };
-                                broadcast_to_subscribers(&mut subscribers, &resolved);
+                    for request_id in pending_ids {
+                        if let Some(perm) = state.resolve_permission(&request_id) {
+                            if let Some(waiter) = permission_waiters.remove(&request_id) {
+                                let _ = waiter.send(HookPermissionDecision {
+                                    request_id: request_id.clone(),
+                                    decision: "allow".into(),
+                                    suggestion: None,
+                                });
                             }
+                            let resolved = ServerEvent::PermissionResolved {
+                                request_id: perm.request_id,
+                                resolved_by: "terminal".into(),
+                            };
+                            broadcast_to_subscribers(&mut subscribers, &resolved);
                         }
                     }
-                    _ => {}
                 }
 
                 // Extract the session_id before consuming the event.
