@@ -505,7 +505,8 @@
         scrollback: 5000,
         fontSize: 13,
         customGlyphs: true,
-        cursorBlink: true,
+        cursorBlink: false,
+        cursorInactiveStyle: 'none',
         fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
         theme: {
           background: '#1a1b26',
