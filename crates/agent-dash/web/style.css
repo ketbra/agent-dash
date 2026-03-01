@@ -616,121 +616,123 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
     pointer-events: auto;
   }
 
-  #mobile-keys {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding: 6px;
-    position: fixed;
-    right: 6px;
-    bottom: 40%;
-    z-index: 10;
-    transition: bottom 0.2s ease;
-  }
+}
 
-  #mobile-keys button {
-    width: 44px;
-    height: 44px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--bg-surface);
-    color: var(--text);
-    font-size: 18px;
-    cursor: pointer;
-    opacity: 0.85;
-  }
+/* Touch-device input features — active on any touch device regardless of screen size */
+.touch #mobile-keys {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px;
+  position: fixed;
+  right: 6px;
+  bottom: 40%;
+  z-index: 10;
+  transition: bottom 0.2s ease;
+}
 
-  #mobile-keys button:active {
-    background: var(--accent);
-    color: var(--bg);
-  }
+.touch #mobile-keys button {
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--text);
+  font-size: 18px;
+  cursor: pointer;
+  opacity: 0.85;
+}
 
-  #mobile-terminal-input {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding: 8px 12px;
-    background: var(--bg-sidebar);
-    border-top: 1px solid var(--border);
-  }
+.touch #mobile-keys button:active {
+  background: var(--accent);
+  color: var(--bg);
+}
 
-  .mobile-input-row {
-    display: flex;
-    gap: 8px;
-    align-items: flex-end;
-  }
+.touch #mobile-terminal-input {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-sidebar);
+  border-top: 1px solid var(--border);
+}
 
-  #mobile-attach-btn {
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    border: 1.5px solid var(--text-dim);
-    background: transparent;
-    color: var(--text-dim);
-    font-size: 22px;
-    font-weight: 300;
-    line-height: 1;
-    cursor: pointer;
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    margin-bottom: 4px;
-  }
+.touch .mobile-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
 
-  #mobile-attach-btn:active {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
+.touch #mobile-attach-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-dim);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 22px;
+  font-weight: 300;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin-bottom: 4px;
+}
 
-  #mobile-image-previews {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-  }
+.touch #mobile-attach-btn:active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 
-  #mobile-image-previews .image-preview-item {
-    width: 48px;
-    height: 48px;
-  }
+.touch #mobile-image-previews {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
 
-  #mobile-image-previews .image-preview-item img {
-    width: 48px;
-    height: 48px;
-  }
+.touch #mobile-image-previews .image-preview-item {
+  width: 48px;
+  height: 48px;
+}
 
-  #mobile-terminal-text {
-    flex: 1;
-    padding: 10px 14px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 18px;
-    color: var(--text);
-    font-family: var(--font-mono);
-    font-size: 16px;
-    outline: none;
-    resize: none;
-    overflow: hidden;
-    max-height: 120px;
-    line-height: 1.4;
-  }
+.touch #mobile-image-previews .image-preview-item img {
+  width: 48px;
+  height: 48px;
+}
 
-  #mobile-terminal-text:focus {
-    border-color: var(--accent);
-  }
+.touch #mobile-terminal-text {
+  flex: 1;
+  padding: 10px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 16px;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  max-height: 120px;
+  line-height: 1.4;
+}
 
-  #mobile-terminal-send {
-    padding: 10px 16px;
-    background: var(--accent);
-    color: var(--bg);
-    border: none;
-    border-radius: 18px;
-    font-weight: 600;
-    font-size: 14px;
-    cursor: pointer;
-    flex-shrink: 0;
-    align-self: flex-end;
-    margin-bottom: 2px;
-  }
+.touch #mobile-terminal-text:focus {
+  border-color: var(--accent);
+}
+
+.touch #mobile-terminal-send {
+  padding: 10px 16px;
+  background: var(--accent);
+  color: var(--bg);
+  border: none;
+  border-radius: 18px;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  flex-shrink: 0;
+  align-self: flex-end;
+  margin-bottom: 2px;
 }

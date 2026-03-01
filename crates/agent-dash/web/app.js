@@ -15,7 +15,8 @@
   let xtermLoading = false;
   let terminalFitTimer = null;
   let terminalResizeObserver = null;
-  let isMobile = false;
+  let isMobile = false;  // touch device (mobile/tablet)
+  let isNarrow = false;  // narrow screen (sidebar becomes drawer)
 
   // --- DOM refs ---
   const sessionList = document.getElementById('session-list');
@@ -213,7 +214,7 @@
     }
 
     selectedSessionId = id;
-    if (isMobile) closeDrawer();
+    if (isNarrow) closeDrawer();
     renderSessions();
     messagesEl.innerHTML = '<div id="empty-state">Loading...</div>';
     if (viewMode !== 'terminal') promptForm.classList.remove('hidden');
@@ -729,18 +730,24 @@
   mobileMenuBtn.onclick = openDrawer;
   backdrop.onclick = closeDrawer;
 
-  // Track mobile state via matchMedia.
-  var mobileQuery = window.matchMedia('(max-width: 768px)');
-  function onMobileChange(e) {
-    isMobile = e.matches;
-    if (!isMobile) {
+  // Detect touch devices (mobile/tablet) regardless of screen size.
+  isMobile = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+  if (isMobile) {
+    document.documentElement.classList.add('touch');
+  }
+
+  // Track narrow screen state for sidebar drawer behavior.
+  var narrowQuery = window.matchMedia('(max-width: 768px)');
+  function onNarrowChange(e) {
+    isNarrow = e.matches;
+    if (!isNarrow) {
       closeDrawer();
     }
     updateMobileKeys();
     updateMobileTermInput();
   }
-  mobileQuery.addEventListener('change', onMobileChange);
-  onMobileChange(mobileQuery);
+  narrowQuery.addEventListener('change', onNarrowChange);
+  onNarrowChange(narrowQuery);
 
   // Edge swipe: swipe right from left edge opens drawer,
   // swipe left on open drawer closes it.
@@ -750,7 +757,7 @@
     var tracking = false;
 
     document.addEventListener('touchstart', function (e) {
-      if (!isMobile) return;
+      if (!isNarrow) return;
       var touch = e.touches[0];
       // Track touches starting within 50px of the left edge (inward of
       // Android Chrome's ~20px back-gesture zone), or on the open sidebar.
