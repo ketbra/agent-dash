@@ -546,10 +546,6 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   display: none;
 }
 
-#mobile-kb-btn {
-  display: none;
-}
-
 @media (max-width: 768px) {
   #mobile-menu-btn {
     display: flex;
@@ -702,31 +698,6 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   #mobile-image-previews .image-preview-item img {
     width: 48px;
     height: 48px;
-  }
-
-  #mobile-kb-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    position: fixed;
-    bottom: 12px;
-    right: 12px;
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
-    border: 1px solid var(--border);
-    background: var(--bg-surface);
-    color: var(--text);
-    font-size: 22px;
-    cursor: pointer;
-    z-index: 10;
-    opacity: 0.85;
-    transition: bottom 0.15s ease;
-  }
-
-  #mobile-kb-btn:active {
-    background: var(--accent);
-    color: var(--bg);
   }
 
   #mobile-terminal-text {

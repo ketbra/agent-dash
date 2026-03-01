@@ -43,7 +43,6 @@
   const mobileTermInput = document.getElementById('mobile-terminal-input');
   const mobileTermText = document.getElementById('mobile-terminal-text');
   const mobileTermSend = document.getElementById('mobile-terminal-send');
-  const mobileKbBtn = document.getElementById('mobile-kb-btn');
   const mobileImagePreviews = document.getElementById('mobile-image-previews');
   const mobileAttachBtn = document.getElementById('mobile-attach-btn');
   const mobileAttachFile = document.getElementById('mobile-attach-file');
@@ -838,11 +837,7 @@
   function updateMobileTermInput() {
     if (!isMobile || viewMode !== 'terminal' || !selectedSessionId) {
       mobileTermInput.classList.add('hidden');
-      mobileKbBtn.classList.add('hidden');
       mobileKbOpen = false;
-    } else {
-      mobileKbBtn.classList.remove('hidden');
-      // Input bar is toggled by the keyboard button, not shown automatically
     }
   }
 
@@ -859,13 +854,12 @@
     scheduleTerminalFit();
   }
 
-  mobileKbBtn.onclick = function () {
-    if (mobileKbOpen) {
-      hideMobileKeyboard();
-    } else {
+  // Tap on terminal area opens the input bar + keyboard on mobile.
+  terminalView.addEventListener('click', function () {
+    if (isMobile && viewMode === 'terminal' && selectedSessionId && !mobileKbOpen) {
       showMobileKeyboard();
     }
-  };
+  });
 
   function sendMobileTermText() {
     var text = mobileTermText.value;
@@ -873,7 +867,6 @@
     if (!selectedSessionId) return;
 
     if (pendingImages.length > 0) {
-      // Send as prompt with images
       var msg = { method: 'send_prompt', session_id: selectedSessionId, text: text || '' };
       msg.images = pendingImages.map(function (img) {
         return { mime_type: img.mime_type, data: img.data };
@@ -881,25 +874,39 @@
       pendingImages = [];
       renderImagePreviews();
       send(msg);
+      // The server saves images to disk, augments the text, then the wrapper
+      // types text + \r into the PTY.  Send a backup \r well after the server
+      // has had time to finish writing.
+      var sid = selectedSessionId;
+      setTimeout(function () {
+        send({ method: 'terminal_input', session_id: sid, data: btoa('\r') });
+      }, 1500);
     } else {
-      // Send as raw terminal input
-      send({ method: 'terminal_input', session_id: selectedSessionId, data: btoa(text + '\r') });
+      // Send text and Enter as separate messages — Claude Code's raw-mode
+      // input handler doesn't process \r as Enter when it arrives in the
+      // same PTY write as the preceding text.
+      if (text) {
+        send({ method: 'terminal_input', session_id: selectedSessionId, data: btoa(text) });
+      }
+      var sid = selectedSessionId;
+      setTimeout(function () {
+        send({ method: 'terminal_input', session_id: sid, data: btoa('\r') });
+      }, 50);
     }
     mobileTermText.value = '';
     mobileTermText.style.height = 'auto';
     mobileTermText.style.overflow = 'hidden';
-    // Refocus to keep keyboard open for more commands
     mobileTermText.focus();
     clearTimeout(autoHideTimer);
   }
 
-  mobileTermSend.onclick = sendMobileTermText;
-  mobileTermText.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMobileTermText();
-    }
+  // Use <form> submit for reliable mobile event delivery.
+  var mobileInputForm = document.getElementById('mobile-input-form');
+  mobileInputForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    sendMobileTermText();
   });
+
 
   // Auto-grow textarea as content expands
   function autoGrowTextarea() {
@@ -911,9 +918,11 @@
   mobileTermText.addEventListener('input', autoGrowTextarea);
 
   // Attach image via file picker (mobile gallery/camera)
-  mobileAttachBtn.onclick = function () {
+  mobileAttachBtn.addEventListener('pointerdown', function (e) {
+    e.preventDefault();
     mobileAttachFile.click();
-  };
+  });
+  mobileAttachBtn.onclick = function () { mobileAttachFile.click(); }; // desktop fallback
 
   mobileAttachFile.addEventListener('change', function () {
     var files = mobileAttachFile.files;
@@ -935,6 +944,11 @@
     }
     // Reset so selecting the same file again triggers change
     mobileAttachFile.value = '';
+    // Re-open input bar after file picker closes
+    if (isMobile) {
+      clearTimeout(autoHideTimer);
+      showMobileKeyboard();
+    }
   });
 
   function sendTerminalSize() {
