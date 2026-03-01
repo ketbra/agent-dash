@@ -45,6 +45,8 @@
   const mobileTermSend = document.getElementById('mobile-terminal-send');
   const mobileKbBtn = document.getElementById('mobile-kb-btn');
   const mobileImagePreviews = document.getElementById('mobile-image-previews');
+  const mobileAttachBtn = document.getElementById('mobile-attach-btn');
+  const mobileAttachFile = document.getElementById('mobile-attach-file');
   var mobileKbOpen = false;
 
   // --- WebSocket ---
@@ -802,33 +804,25 @@
     }
   }
 
-  // Shift floating UI above virtual keyboard and resize terminal to fit.
-  if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', function () {
-      if (!isMobile) return;
-      var kbHeight = window.innerHeight - window.visualViewport.height;
-      if (kbHeight > 100) {
-        mobileKeys.style.bottom = (kbHeight + 12) + 'px';
-        mobileTermInput.style.bottom = kbHeight + 'px';
-        mobileKbBtn.style.bottom = (kbHeight + (mobileKbOpen ? 60 : 12)) + 'px';
-        // Shrink terminal so content above keyboard stays visible
-        var inputBarH = mobileKbOpen ? 52 : 0;
-        terminalView.style.paddingBottom = (kbHeight + inputBarH) + 'px';
-        scheduleTerminalFit();
-      } else {
-        mobileKeys.style.bottom = '';
-        mobileTermInput.style.bottom = '';
-        mobileKbBtn.style.bottom = '';
-        terminalView.style.paddingBottom = '';
-        // Auto-hide input bar when keyboard is dismissed
-        if (mobileKbOpen) {
-          hideMobileKeyboard();
-        } else {
-          scheduleTerminalFit();
-        }
-      }
-    });
-  }
+  // With interactive-widget=resizes-content, the viewport resizes when the
+  // keyboard opens/closes.  Track height changes to auto-hide the input bar
+  // when the keyboard is dismissed and to refit the terminal.
+  var prevInnerHeight = window.innerHeight;
+  var autoHideTimer = null;
+  window.addEventListener('resize', function () {
+    var h = window.innerHeight;
+    var delta = h - prevInnerHeight;
+    prevInnerHeight = h;
+
+    // Viewport grew significantly = keyboard closed.
+    // Delay so tapping Send/Attach doesn't race with auto-hide.
+    if (isMobile && delta > 100 && mobileKbOpen) {
+      clearTimeout(autoHideTimer);
+      autoHideTimer = setTimeout(function () {
+        if (mobileKbOpen) hideMobileKeyboard();
+      }, 300);
+    }
+  });
 
   var keyMap = { up: '\x1b[A', down: '\x1b[B', enter: '\r' };
   mobileKeys.addEventListener('click', function (e) {
@@ -845,10 +839,7 @@
     if (!isMobile || viewMode !== 'terminal' || !selectedSessionId) {
       mobileTermInput.classList.add('hidden');
       mobileKbBtn.classList.add('hidden');
-      if (mobileKbOpen) {
-        mobileKbOpen = false;
-        terminalView.style.paddingBottom = '';
-      }
+      mobileKbOpen = false;
     } else {
       mobileKbBtn.classList.remove('hidden');
       // Input bar is toggled by the keyboard button, not shown automatically
@@ -865,7 +856,6 @@
     mobileKbOpen = false;
     mobileTermInput.classList.add('hidden');
     mobileTermText.blur();
-    terminalView.style.paddingBottom = '';
     scheduleTerminalFit();
   }
 
@@ -896,14 +886,55 @@
       send({ method: 'terminal_input', session_id: selectedSessionId, data: btoa(text + '\r') });
     }
     mobileTermText.value = '';
+    mobileTermText.style.height = 'auto';
+    mobileTermText.style.overflow = 'hidden';
+    // Refocus to keep keyboard open for more commands
+    mobileTermText.focus();
+    clearTimeout(autoHideTimer);
   }
 
   mobileTermSend.onclick = sendMobileTermText;
   mobileTermText.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMobileTermText();
     }
+  });
+
+  // Auto-grow textarea as content expands
+  function autoGrowTextarea() {
+    mobileTermText.style.height = 'auto';
+    mobileTermText.style.height = Math.min(mobileTermText.scrollHeight, 120) + 'px';
+    // Switch to scrollable when at max height
+    mobileTermText.style.overflow = mobileTermText.scrollHeight > 120 ? 'auto' : 'hidden';
+  }
+  mobileTermText.addEventListener('input', autoGrowTextarea);
+
+  // Attach image via file picker (mobile gallery/camera)
+  mobileAttachBtn.onclick = function () {
+    mobileAttachFile.click();
+  };
+
+  mobileAttachFile.addEventListener('change', function () {
+    var files = mobileAttachFile.files;
+    if (!files || files.length === 0) return;
+    for (var i = 0; i < files.length; i++) {
+      (function (file) {
+        var reader = new FileReader();
+        reader.onload = function () {
+          var dataUrl = reader.result;
+          var commaIdx = dataUrl.indexOf(',');
+          var meta = dataUrl.substring(0, commaIdx);
+          var mime_type = meta.split(':')[1].split(';')[0];
+          var data = dataUrl.substring(commaIdx + 1);
+          pendingImages.push({ mime_type: mime_type, data: data, dataUrl: dataUrl });
+          renderImagePreviews();
+        };
+        reader.readAsDataURL(file);
+      })(files[i]);
+    }
+    // Reset so selecting the same file again triggers change
+    mobileAttachFile.value = '';
   });
 
   function sendTerminalSize() {

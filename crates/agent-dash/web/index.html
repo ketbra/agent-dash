@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
   <title>agent-dash</title>
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/css/xterm.css">
@@ -30,14 +30,16 @@
           <button type="button" data-key="down" title="Down">&#9660;</button>
           <button type="button" data-key="enter" title="Enter">&#9166;</button>
         </div>
-        <div id="mobile-terminal-input" class="hidden">
-          <div id="mobile-image-previews" class="hidden"></div>
-          <div class="mobile-input-row">
-            <input type="text" id="mobile-terminal-text" placeholder="Type here..." autocomplete="off" autocorrect="on">
-            <button type="button" id="mobile-terminal-send">Send</button>
-          </div>
-        </div>
         <button id="mobile-kb-btn" type="button" class="hidden" title="Toggle keyboard">&#x2328;</button>
+      </div>
+      <div id="mobile-terminal-input" class="hidden">
+        <div id="mobile-image-previews" class="hidden"></div>
+        <div class="mobile-input-row">
+          <button type="button" id="mobile-attach-btn" title="Attach image">+</button>
+          <input type="file" id="mobile-attach-file" accept="image/*" multiple class="hidden">
+          <textarea id="mobile-terminal-text" rows="1" placeholder="Type here..." autocomplete="off" autocorrect="on"></textarea>
+          <button type="button" id="mobile-terminal-send">Send</button>
+        </div>
       </div>
       <div id="thinking-indicator" class="hidden"></div>
       <form id="prompt-form" class="hidden">

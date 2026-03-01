@@ -654,19 +654,38 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
     flex-direction: column;
     gap: 8px;
     padding: 8px 12px;
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    z-index: 11;
     background: var(--bg-sidebar);
     border-top: 1px solid var(--border);
-    transition: bottom 0.15s ease;
   }
 
   .mobile-input-row {
     display: flex;
     gap: 8px;
+    align-items: flex-end;
+  }
+
+  #mobile-attach-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: 1.5px solid var(--text-dim);
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 22px;
+    font-weight: 300;
+    line-height: 1;
+    cursor: pointer;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    margin-bottom: 4px;
+  }
+
+  #mobile-attach-btn:active {
+    border-color: var(--accent);
+    color: var(--accent);
   }
 
   #mobile-image-previews {
@@ -715,11 +734,15 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
     padding: 10px 14px;
     background: var(--bg-surface);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 18px;
     color: var(--text);
     font-family: var(--font-mono);
     font-size: 16px;
     outline: none;
+    resize: none;
+    overflow: hidden;
+    max-height: 120px;
+    line-height: 1.4;
   }
 
   #mobile-terminal-text:focus {
@@ -731,9 +754,12 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
     background: var(--accent);
     color: var(--bg);
     border: none;
-    border-radius: 6px;
+    border-radius: 18px;
     font-weight: 600;
     font-size: 14px;
     cursor: pointer;
+    flex-shrink: 0;
+    align-self: flex-end;
+    margin-bottom: 2px;
   }
 }
