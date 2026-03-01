@@ -825,6 +825,7 @@
 
   var keyMap = { up: '\x1b[A', down: '\x1b[B', enter: '\r' };
   mobileKeys.addEventListener('click', function (e) {
+    e.stopPropagation(); // Don't let it bubble to terminalView and open the keyboard
     var btn = e.target.closest('button[data-key]');
     if (!btn || !selectedSessionId) return;
     var seq = keyMap[btn.dataset.key];
